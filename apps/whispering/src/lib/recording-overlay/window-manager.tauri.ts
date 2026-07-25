@@ -20,8 +20,11 @@ const log = createLogger('whispering/recording-overlay');
 // RecordingPill); the transparent window centers the narrower states inside it.
 const OVERLAY_WIDTH = 224;
 const OVERLAY_HEIGHT = 40;
-// Distance from the bottom edge of the monitor, in logical pixels.
+// Corner placement (bottom-right, next to the Windows notification area / tray).
+// Margins are in logical pixels. The bottom margin clears the taskbar since
+// `monitor.size` reports the full monitor, not the taskbar-excluded work area.
 const OVERLAY_BOTTOM_MARGIN = 72;
+const OVERLAY_RIGHT_MARGIN = 24;
 
 let latestStatus: RecordingPillStatus | null = null;
 let queue: Promise<void> = Promise.resolve();
@@ -36,7 +39,8 @@ async function computeOverlayPosition(): Promise<LogicalPosition | null> {
 	const monitorWidth = monitor.size.width / scale;
 	const monitorHeight = monitor.size.height / scale;
 
-	const x = monitorX + (monitorWidth - OVERLAY_WIDTH) / 2;
+	// Bottom-right corner: pin to the right edge (minus margin) instead of centering.
+	const x = monitorX + monitorWidth - OVERLAY_WIDTH - OVERLAY_RIGHT_MARGIN;
 	const y = monitorY + monitorHeight - OVERLAY_HEIGHT - OVERLAY_BOTTOM_MARGIN;
 	return new LogicalPosition(x, y);
 }
