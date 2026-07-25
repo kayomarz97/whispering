@@ -265,7 +265,32 @@ export async function startVadRecording() {
 
 	log.info('Starting voice activated capture');
 
+	// When live transcription is on, translate the user's second-based pause
+	// controls into Silero v5 VAD frame counts (~32ms per 512-sample frame at
+	// 16kHz): a silence of `pauseSeconds` ends a phrase, and detections shorter
+	// than `minSpeechSeconds` are dropped. Off => undefined => model defaults.
+	const VAD_FRAME_SECONDS = 512 / 16000;
+	const liveTranscriptionEnabled = settings.get('liveTranscription.enabled');
+	const redemptionFrames = liveTranscriptionEnabled
+		? Math.max(
+				1,
+				Math.round(
+					settings.get('liveTranscription.pauseSeconds') / VAD_FRAME_SECONDS,
+				),
+			)
+		: undefined;
+	const minSpeechFrames = liveTranscriptionEnabled
+		? Math.max(
+				1,
+				Math.round(
+					settings.get('liveTranscription.minSpeechSeconds') / VAD_FRAME_SECONDS,
+				),
+			)
+		: undefined;
+
 	const { data: outcome, error } = await vadRecorder.startActiveListening({
+		redemptionFrames,
+		minSpeechFrames,
 		onLevel: reportRecordingMicLevel,
 		onSpeechStart: () => {
 			// Speaking window opened: pause whatever is playing. The pill's meter

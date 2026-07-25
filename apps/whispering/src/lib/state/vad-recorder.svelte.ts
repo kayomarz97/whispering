@@ -82,6 +82,9 @@ function createReactiveVadRecorder() {
 			onSpeechEnd: (blob: Blob) => void;
 			onVADMisfire: () => void;
 			onLevel: (level: number) => void;
+			/** Optional VAD pause-detection tuning (frames); see the recorder package. */
+			redemptionFrames?: number;
+			minSpeechFrames?: number;
 		}) {
 			const configuredDeviceId = deviceConfig.get(
 				'recording.navigator.deviceId',
@@ -92,6 +95,8 @@ function createReactiveVadRecorder() {
 
 			const result = await vad.startActiveListening({
 				deviceId,
+				redemptionFrames: callbacks.redemptionFrames,
+				minSpeechFrames: callbacks.minSpeechFrames,
 				onLevel: callbacks.onLevel,
 				// State mutations are gated on an already-armed session (`!== 'IDLE'`)
 				// so a frame that arrives during the start window does not flip state

@@ -74,6 +74,17 @@ export type StartActiveListeningOptions = {
 	 * live level meter.
 	 */
 	onLevel: (level: number) => void;
+	/**
+	 * How many trailing near-silence frames end a phrase (Silero `redemptionFrames`,
+	 * ~32ms/frame). Larger = the speaker can pause longer mid-phrase before the
+	 * utterance is cut. Omit to use the model default.
+	 */
+	redemptionFrames?: number;
+	/**
+	 * Minimum speech frames for a detection to count as a phrase (Silero
+	 * `minSpeechFrames`). Larger = short blips are ignored. Omit for the default.
+	 */
+	minSpeechFrames?: number;
 };
 
 export type VadRecorder = {
@@ -122,6 +133,8 @@ export function createVadRecorder({
 			onSpeechEnd,
 			onVADMisfire,
 			onLevel,
+			redemptionFrames,
+			minSpeechFrames,
 		}) {
 			if (_session || _starting) return VadRecorderError.AlreadyActive();
 			_starting = true;
@@ -163,6 +176,10 @@ export function createVadRecorder({
 								onLevel(computeFrameRms(frame));
 							},
 							model: 'v5',
+							// Caller-tuned pause detection (from the live-transcription
+							// settings). Only override the model defaults when provided.
+							...(redemptionFrames !== undefined && { redemptionFrames }),
+							...(minSpeechFrames !== undefined && { minSpeechFrames }),
 							baseAssetPath: assetBaseUrl,
 							// vad-web sets `ort.env.wasm.wasmPaths` to this base path before
 							// calling ortConfig, so the default onnxruntime-web build resolves
