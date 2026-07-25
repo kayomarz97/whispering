@@ -354,6 +354,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_autostart::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(HostState::new(port))
         .manage(GlobalShortcutRegistry::default())
         .manage(Mutex::new(Recorder::new()))
@@ -384,6 +386,19 @@ pub fn run() {
             app.manage(keyboard::TapController::new(app.handle().clone()));
 
             shell::create_tray(app.handle())?;
+
+            // Check for and install updates on launch (no-op until the release
+            // endpoint is reachable). Failures are logged, never fatal: a missing
+            // network or endpoint must not block the app from starting.
+            #[cfg(desktop)]
+            {
+                let update_handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = check_and_install_update(update_handle).await {
+                        log::warn!("update check failed: {error}");
+                    }
+                });
+            }
 
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
@@ -895,6 +910,23 @@ fn focus<R: Runtime>(window: WebviewWindow<R>) {
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+/// Check the configured updater endpoint and, if a newer signed release exists,
+/// download and install it, then relaunch. On Windows the installer exits the
+/// app during install (a documented Windows-installer limitation), so `restart`
+/// is reached only on the platforms that keep running.
+#[cfg(desktop)]
+async fn check_and_install_update(app: AppHandle) -> tauri_plugin_updater::Result<()> {
+    use tauri_plugin_updater::UpdaterExt;
+    if let Some(update) = app.updater()?.check().await? {
+        log::info!("installing Whispering update {}", update.version);
+        update
+            .download_and_install(|_downloaded, _total| {}, || {})
+            .await?;
+        app.restart();
+    }
+    Ok(())
 }
 
 fn invalidate_surfaces(app: &DesktopAppHandle) {
