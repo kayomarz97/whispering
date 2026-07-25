@@ -170,6 +170,29 @@ const recording = {
 } as const;
 
 /**
+ * Live (pause-triggered) transcription. When enabled with voice-activity
+ * capture, each phrase you speak is transcribed the moment you pause and shown
+ * in the recording overlay, so text appears as you talk instead of only after
+ * you stop. The second-based controls tune how a "pause" is detected: a longer
+ * pause means fewer, more complete phrases; a shorter one means snappier but
+ * choppier updates. `minSpeechSeconds` drops sub-threshold blips so silence and
+ * lip smacks do not fire a transcription (which would otherwise each be billed
+ * the provider's minimum). Roaming preferences, so they follow you across
+ * machines like the other capture toggles.
+ */
+const liveTranscription = {
+	'liveTranscription.enabled': defineKv(field.boolean(), () => false),
+	'liveTranscription.pauseSeconds': defineKv(
+		field.number({ minimum: 0.3, maximum: 3 }),
+		() => 0.8,
+	),
+	'liveTranscription.minSpeechSeconds': defineKv(
+		field.number({ minimum: 0.1, maximum: 2 }),
+		() => 0.3,
+	),
+} as const;
+
+/**
  * Transcription service and per-service model selections.
  *
  * Each service's model is its own KV entry so switching from OpenAI to Groq and
@@ -366,6 +389,7 @@ export function defineWhispering(
 			...output,
 			...dataRetention,
 			...recording,
+			...liveTranscription,
 			...defineTranscriptionSettings(defaultTranscriptionService),
 			...completion,
 			...dictionary,

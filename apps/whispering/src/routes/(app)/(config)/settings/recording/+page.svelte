@@ -29,6 +29,23 @@
 			mutationFn: whispering.actions.recordings_export_markdown,
 		}),
 	);
+
+	// Second-based tuning for live (pause-triggered) transcription. Values must
+	// stay within the schema ranges in workspace/definition.ts
+	// (pauseSeconds 0.3-3, minSpeechSeconds 0.1-2).
+	const PAUSE_SECONDS_OPTIONS = [
+		{ value: 0.5, label: '0.5 seconds (snappy)' },
+		{ value: 0.8, label: '0.8 seconds (recommended)' },
+		{ value: 1, label: '1 second' },
+		{ value: 1.5, label: '1.5 seconds' },
+		{ value: 2, label: '2 seconds (relaxed)' },
+	];
+	const MIN_SPEECH_OPTIONS = [
+		{ value: 0.2, label: '0.2 seconds' },
+		{ value: 0.3, label: '0.3 seconds (recommended)' },
+		{ value: 0.5, label: '0.5 seconds' },
+		{ value: 0.8, label: '0.8 seconds' },
+	];
 </script>
 
 <svelte:head> <title>Recording Settings - Whispering</title> </svelte:head>
@@ -178,5 +195,63 @@
 				snapshot: later edits in Whispering do not change the downloaded file.
 			</Field.Description>
 		</Field.Field>
+	</Field.Group>
+</Field.Set>
+
+<Field.Set>
+	<Field.Legend>Live transcription</Field.Legend>
+	<Field.Description>
+		Show your words in the recording overlay as you speak, instead of only after
+		you stop. This uses Voice Activated recording: each time you pause, the phrase
+		you just spoke is transcribed and added to the overlay.
+	</Field.Description>
+	<Field.Separator />
+	<Field.Group>
+		<SettingSwitch
+			key="liveTranscription.enabled"
+			label="Enable live transcription"
+			description="When on, each phrase is transcribed the moment you pause and appears live in the recording overlay. The full transcript is still produced when you stop, so final accuracy is unchanged."
+		/>
+
+		{#if settings.get('liveTranscription.enabled')}
+			<Alert.Root>
+				<InfoIcon class="size-4" />
+				<Alert.Title>How it works</Alert.Title>
+				<Alert.Description>
+					You speak, and the moment you pause for the "pause length" below, that
+					phrase is sent to your transcription provider and appears in the corner
+					overlay, building up as you talk. A longer pause gives fewer, more
+					complete phrases; a shorter pause is snappier but choppier. This needs
+					the Recording Trigger above set to Voice Activated.
+				</Alert.Description>
+			</Alert.Root>
+
+			{#if settings.get('recording.trigger') !== 'vad'}
+				<Alert.Root variant="warning">
+					<InfoIcon class="size-4" />
+					<Alert.Title>Set the trigger to Voice Activated</Alert.Title>
+					<Alert.Description>
+						Live transcription needs pause detection, which only Voice Activated
+						recording provides. Change the Recording Trigger above to Voice
+						Activated to use it.
+					</Alert.Description>
+				</Alert.Root>
+			{/if}
+
+			<SettingSelect
+				store={settings}
+				key="liveTranscription.pauseSeconds"
+				label="Pause length"
+				items={PAUSE_SECONDS_OPTIONS}
+				description="How long a silence counts as a pause that ends a phrase and sends it for transcription."
+			/>
+			<SettingSelect
+				store={settings}
+				key="liveTranscription.minSpeechSeconds"
+				label="Shortest phrase"
+				items={MIN_SPEECH_OPTIONS}
+				description="Phrases shorter than this are ignored, so silences and short blips do not each trigger a transcription (which your provider may bill at a minimum length)."
+			/>
+		{/if}
 	</Field.Group>
 </Field.Set>
