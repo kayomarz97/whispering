@@ -409,6 +409,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build Epicenter")
         .run(|app, event| match event {
+            // `RunEvent::Reopen` (dock-icon reactivation) exists only on macOS/iOS;
+            // gate the arm so non-macOS targets (Windows/Linux) still compile.
+            #[cfg(target_os = "macos")]
             RunEvent::Reopen { .. } => request_surface(app, Surface::Query),
             RunEvent::Exit => shutdown_host(app),
             _ => {}
