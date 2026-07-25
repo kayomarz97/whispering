@@ -25,7 +25,7 @@
 	},
 	"bundle": {
 		"active": true,
-		"targets": ["app"],
+		"targets": "all",
 		"category": "Productivity",
 		"publisher": "Epicenter",
 		"copyright": "Copyright © 2026 Epicenter",
@@ -36,7 +36,7 @@
 			"recorder-state-icons/studio_microphone.png": "recorder-state-icons/studio_microphone.png",
 			"recorder-state-icons/red_large_square.png": "recorder-state-icons/red_large_square.png"
 		},
-		"icon": ["icons/icon.png", "icons/icon.icns"],
+		"icon": ["icons/icon.png", "icons/icon.ico", "icons/icon.icns"],
 		"macOS": {
 			"entitlements": "entitlements.plist",
 			"hardenedRuntime": true,
