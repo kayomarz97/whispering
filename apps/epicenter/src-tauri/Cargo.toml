@@ -60,6 +60,10 @@ audiopus = "0.3.0-rc.0"
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Media_Control", "Foundation", "Foundation_Collections", "Win32_System_Com"] }
 winreg = "0.55"
+# WebView2 microphone/camera permission grant (getUserMedia). windows-core 0.61 matches
+# webview2-com 0.38's ABI; kept separate from the `windows` 0.62 above on purpose.
+webview2-com = "0.38"
+windows-core = "0.61"
 
 [target.'cfg(all(windows, target_arch = "x86_64"))'.dependencies]
 transcribe-cpp = { version = "0.1.0", default-features = false, features = ["dynamic-backends", "vulkan"] }

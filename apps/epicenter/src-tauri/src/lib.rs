@@ -894,6 +894,12 @@ fn ensure_surface(
         .build()
         .with_context(|| format!("create the {} WebView", surface.title()))?;
 
+    // Allow the WebView to grant its own origin microphone/camera access so
+    // browser-based capture (VAD's getUserMedia) works; WebView2 otherwise
+    // rejects it as NotSupportedError with no permission handler.
+    #[cfg(windows)]
+    grant_webview_media_permissions(&window);
+
     let close_window = window.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::CloseRequested { api, .. } = event {
@@ -911,6 +917,66 @@ fn focus<R: Runtime>(window: WebviewWindow<R>) {
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+/// Only auto-grant media to our own loopback surfaces, never to arbitrary pages
+/// the webview might navigate to.
+#[cfg(windows)]
+fn is_app_origin(uri: &str) -> bool {
+    uri.starts_with("http://127.0.0.1")
+        || uri.starts_with("http://localhost")
+        || uri.starts_with("http://tauri.localhost")
+        || uri.starts_with("https://tauri.localhost")
+}
+
+/// Register a WebView2 `PermissionRequested` handler that allows this app's own
+/// origin to use the microphone and camera. Without it WebView2 answers
+/// `getUserMedia` with `NotSupportedError` (no permission UI exists in an
+/// embedded webview), which breaks browser-based VAD capture. macOS/Linux
+/// webviews grant media through their own prompts, so this is Windows-only.
+#[cfg(windows)]
+fn grant_webview_media_permissions(win: &WebviewWindow) {
+    use webview2_com::Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2, ICoreWebView2PermissionRequestedEventArgs,
+        COREWEBVIEW2_PERMISSION_KIND_CAMERA, COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+        COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
+    };
+    use webview2_com::{take_pwstr, PermissionRequestedEventHandler};
+
+    let label = win.label().to_string();
+    let _ = win.with_webview(move |webview| {
+        let core = match unsafe { webview.controller().CoreWebView2() } {
+            Ok(core) => core,
+            Err(error) => {
+                log::warn!("WebView2 media grant: CoreWebView2 unavailable on '{label}': {error}");
+                return;
+            }
+        };
+        let handler = PermissionRequestedEventHandler::create(Box::new(
+            move |_core: Option<ICoreWebView2>,
+                  args: Option<ICoreWebView2PermissionRequestedEventArgs>|
+                  -> windows_core::Result<()> {
+                let Some(args) = args else { return Ok(()) };
+                unsafe {
+                    let mut kind = COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION;
+                    args.PermissionKind(&mut kind)?;
+                    if kind != COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                        && kind != COREWEBVIEW2_PERMISSION_KIND_CAMERA
+                    {
+                        return Ok(());
+                    }
+                    let mut uri = windows_core::PWSTR::null();
+                    args.Uri(&mut uri)?;
+                    if is_app_origin(&take_pwstr(uri)) {
+                        args.SetState(COREWEBVIEW2_PERMISSION_STATE_ALLOW)?;
+                    }
+                }
+                Ok(())
+            },
+        ));
+        let mut token = 0i64;
+        let _ = unsafe { core.add_PermissionRequested(&handler, &mut token) };
+    });
 }
 
 /// Check the configured updater endpoint and, if a newer signed release exists,
