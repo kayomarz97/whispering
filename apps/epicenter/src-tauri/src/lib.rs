@@ -416,7 +416,7 @@ pub fn run() {
                 }
             }
             if !opened_surface {
-                request_surface(app.handle(), Surface::Query);
+                request_surface(app.handle(), Surface::Whispering);
             }
             request_start(app.handle().clone(), None);
             Ok(())
@@ -427,7 +427,7 @@ pub fn run() {
             // `RunEvent::Reopen` (dock-icon reactivation) exists only on macOS/iOS;
             // gate the arm so non-macOS targets (Windows/Linux) still compile.
             #[cfg(target_os = "macos")]
-            RunEvent::Reopen { .. } => request_surface(app, Surface::Query),
+            RunEvent::Reopen { .. } => request_surface(app, Surface::Whispering),
             RunEvent::Exit => shutdown_host(app),
             _ => {}
         });
@@ -436,7 +436,7 @@ pub fn run() {
 fn open_forwarded_surfaces(app: &DesktopAppHandle, arguments: &[String]) {
     let surfaces = surfaces_from_arguments(arguments);
     if surfaces.is_empty() {
-        request_surface(app, Surface::Query);
+        request_surface(app, Surface::Whispering);
     } else {
         for surface in surfaces {
             request_surface(app, surface);
