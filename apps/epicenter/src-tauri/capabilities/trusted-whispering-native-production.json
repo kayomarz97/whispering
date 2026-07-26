@@ -62,6 +62,20 @@
 		"notification:default",
 		"opener:allow-default-urls",
 		"opener:allow-open-url",
-		"os:default"
+		"os:default",
+		{
+			"identifier": "http:default",
+			"allow": [
+				{ "url": "https://api.groq.com/*" },
+				{ "url": "https://api.openai.com/*" },
+				{ "url": "https://api.anthropic.com/*" },
+				{ "url": "https://generativelanguage.googleapis.com/*" },
+				{ "url": "https://api.elevenlabs.io/*" },
+				{ "url": "https://api.deepgram.com/*" },
+				{ "url": "https://api.mistral.ai/*" },
+				{ "url": "https://openrouter.ai/*" },
+				{ "url": "https://**" }
+			]
+		}
 	]
 }
