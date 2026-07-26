@@ -12,8 +12,10 @@ import { report } from '$lib/report';
 import { services } from '$lib/services';
 import type { RecorderStopResult } from '$lib/services/recorder/contract';
 import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
+import { liveTranscript } from '$lib/state/live-transcript.svelte';
 import { polishHud } from '$lib/state/polish-hud.svelte';
 import { recordings } from '$lib/state/recordings.svelte';
+import { settings } from '$lib/state/settings.svelte';
 
 /**
  * Argument shape for the pipeline. The recorder produces a
@@ -124,6 +126,13 @@ export async function processRecordingPipeline({
 			transcribeLoading?.reject({ cause: transcribeError });
 		}
 		return;
+	}
+
+	// Live transcription: append this phrase to the running overlay transcript so
+	// text builds up as the user speaks. Dictation-only and gated on the setting;
+	// purely additive, it never affects the Polish/delivery path below.
+	if (isDictation && settings.get('liveTranscription.enabled')) {
+		liveTranscript.append(transcribedText);
 	}
 
 	// Run Polish over the raw transcript, then deliver the polished text. The raw

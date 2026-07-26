@@ -16,6 +16,12 @@ export type RecordingPillStatus =
 			isSpeaking: boolean;
 			/** A previous phrase is still transcribing beside the live meter. */
 			isTranscribing: boolean;
+			/**
+			 * Running live transcript so far this session (empty until the first
+			 * phrase lands, and only populated when live transcription is enabled).
+			 * Shown as building text below the meter in the overlay.
+			 */
+			liveTranscript: string;
 	  }
 	| { phase: 'transcribing' }
 	| { phase: 'polishing' }

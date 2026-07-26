@@ -118,6 +118,16 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 {#if status}
+	<!-- Column wrapper: the live transcript (when present) stacks above the pill.
+	     With no transcript this collapses to just the pill, unchanged. -->
+	<div class="flex flex-col items-center gap-2">
+		{#if recording && recording.trigger === 'vad' && recording.liveTranscript}
+			<div
+				class="max-h-[96px] w-[340px] overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f11]/90 px-3.5 py-2.5 text-left text-[13px] leading-snug text-white/90 backdrop-blur-md select-none"
+			>
+				{recording.liveTranscript}
+			</div>
+		{/if}
 	<div
 		class={cn(
 			// 40px-tall pill, shared look. gap-2.5 spaces the chip icon from its label;
@@ -253,5 +263,6 @@
 			     lives in the OS notification and the recordings row, never here. -->
 			<span class="min-w-0 truncate text-[13px] font-medium">{chip.label}</span>
 		{/if}
+	</div>
 	</div>
 {/if}

@@ -49,6 +49,7 @@ describe('dictation pill projection', () => {
 		expect(project(vad('LISTENING'), { kind: 'none' })).toEqual({
 			phase: 'recording',
 			trigger: 'vad',
+			liveTranscript: '',
 			isSpeaking: false,
 			isTranscribing: false,
 		});
@@ -58,6 +59,7 @@ describe('dictation pill projection', () => {
 		expect(project(vad('LISTENING'), { kind: 'transcribing' })).toEqual({
 			phase: 'recording',
 			trigger: 'vad',
+			liveTranscript: '',
 			isSpeaking: false,
 			isTranscribing: true,
 		});
@@ -67,6 +69,7 @@ describe('dictation pill projection', () => {
 		expect(project(vad('SPEECH_DETECTED'), { kind: 'none' })).toEqual({
 			phase: 'recording',
 			trigger: 'vad',
+			liveTranscript: '',
 			isSpeaking: true,
 			isTranscribing: false,
 		});
@@ -78,6 +81,7 @@ describe('dictation pill projection', () => {
 		).toEqual({
 			phase: 'recording',
 			trigger: 'vad',
+			liveTranscript: '',
 			isSpeaking: true,
 			isTranscribing: false,
 		});
@@ -89,6 +93,7 @@ describe('dictation pill projection', () => {
 		).toEqual({
 			phase: 'recording',
 			trigger: 'vad',
+			liveTranscript: '',
 			isSpeaking: false,
 			isTranscribing: false,
 		});

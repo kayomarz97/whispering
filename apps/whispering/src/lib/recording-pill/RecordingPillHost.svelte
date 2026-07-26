@@ -4,6 +4,7 @@
 	import { projectLifecycleToStatus } from '$lib/recording-pill/projection';
 	import { webPillLevel } from '$lib/recording-pill/web-level.svelte';
 	import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
+	import { liveTranscript } from '$lib/state/live-transcript.svelte';
 
 	// The web mount of the shared dictation pill. The app layout mounts this host
 	// only in the browser build. It places `RecordingPill` at the bottom center and
@@ -11,7 +12,9 @@
 	// `pill-actions` with no status synchronization or IPC.
 	// The pill body has no reveal action on web: the app window is already in
 	// front, and a failure is surfaced by the notification and the recordings row.
-	const status = $derived(projectLifecycleToStatus(dictationLifecycle.current));
+	const status = $derived(
+		projectLifecycleToStatus(dictationLifecycle.current, liveTranscript.text),
+	);
 </script>
 
 {#if status}

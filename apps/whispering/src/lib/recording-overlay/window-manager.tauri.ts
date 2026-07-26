@@ -7,6 +7,7 @@ import {
 import { once } from 'wellcrafted/function';
 import { createLogger } from 'wellcrafted/logger';
 import { whisperingPath } from '$lib/constants/urls';
+import { settings } from '$lib/state/settings.svelte';
 import {
 	RECORDING_OVERLAY_WINDOW_LABEL,
 	recordingOverlayReady,
@@ -20,11 +21,23 @@ const log = createLogger('whispering/recording-overlay');
 // RecordingPill); the transparent window centers the narrower states inside it.
 const OVERLAY_WIDTH = 224;
 const OVERLAY_HEIGHT = 40;
+// When live transcription is on, the overlay also shows a transcript card above
+// the pill (see RecordingPill), so the window is grown to fit it. Sized at
+// creation from the setting; a mid-session toggle takes effect next session.
+const OVERLAY_LIVE_WIDTH = 360;
+const OVERLAY_LIVE_HEIGHT = 168;
 // Corner placement (bottom-right, next to the Windows notification area / tray).
 // Margins are in logical pixels. The bottom margin clears the taskbar since
 // `monitor.size` reports the full monitor, not the taskbar-excluded work area.
 const OVERLAY_BOTTOM_MARGIN = 72;
 const OVERLAY_RIGHT_MARGIN = 24;
+
+/** Overlay window size, grown when live transcription is on to fit the text. */
+function overlaySize(): { width: number; height: number } {
+	return settings.get('liveTranscription.enabled')
+		? { width: OVERLAY_LIVE_WIDTH, height: OVERLAY_LIVE_HEIGHT }
+		: { width: OVERLAY_WIDTH, height: OVERLAY_HEIGHT };
+}
 
 let latestStatus: RecordingPillStatus | null = null;
 let queue: Promise<void> = Promise.resolve();
@@ -40,8 +53,9 @@ async function computeOverlayPosition(): Promise<LogicalPosition | null> {
 	const monitorHeight = monitor.size.height / scale;
 
 	// Bottom-right corner: pin to the right edge (minus margin) instead of centering.
-	const x = monitorX + monitorWidth - OVERLAY_WIDTH - OVERLAY_RIGHT_MARGIN;
-	const y = monitorY + monitorHeight - OVERLAY_HEIGHT - OVERLAY_BOTTOM_MARGIN;
+	const { width, height } = overlaySize();
+	const x = monitorX + monitorWidth - width - OVERLAY_RIGHT_MARGIN;
+	const y = monitorY + monitorHeight - height - OVERLAY_BOTTOM_MARGIN;
 	return new LogicalPosition(x, y);
 }
 
@@ -62,11 +76,12 @@ async function createOverlayWindow(): Promise<WebviewWindow | null> {
 		window.location.origin,
 	).href;
 
+	const { width, height } = overlaySize();
 	const overlay = new WebviewWindow(RECORDING_OVERLAY_WINDOW_LABEL, {
 		url: overlayUrl,
 		title: 'Recording',
-		width: OVERLAY_WIDTH,
-		height: OVERLAY_HEIGHT,
+		width,
+		height,
 		transparent: true,
 		decorations: false,
 		shadow: false,

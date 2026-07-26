@@ -16,6 +16,12 @@ import type { RecordingPillStatus } from './model.js';
  */
 export function projectLifecycleToStatus(
 	lifecycle: DictationLifecycle,
+	/**
+	 * Running live transcript for this session, read from the store by the
+	 * runtime callers (kept a parameter so this projection stays a pure function
+	 * and never imports reactive state).
+	 */
+	liveTranscriptText = '',
 ): RecordingPillStatus | null {
 	const { capture, outcome } = lifecycle;
 
@@ -36,6 +42,9 @@ export function projectLifecycleToStatus(
 			// "still working on the last phrase" beside the live meter.
 			isTranscribing:
 				outcome.kind === 'transcribing' || outcome.kind === 'polishing',
+			// The running transcript built up from each pause so far. Empty unless
+			// live transcription is enabled and at least one phrase has landed.
+			liveTranscript: liveTranscriptText,
 		};
 	}
 

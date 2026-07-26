@@ -14,6 +14,7 @@ import { log, report } from '$lib/report';
 import { captureSurface } from '$lib/state/capture-surface.svelte';
 import { deviceConfig } from '$lib/state/device-config.svelte';
 import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
+import { liveTranscript } from '$lib/state/live-transcript.svelte';
 import { manualRecorder } from '$lib/state/manual-recorder.svelte';
 import { settings } from '$lib/state/settings.svelte';
 import { vadRecorder } from '$lib/state/vad-recorder.svelte';
@@ -253,6 +254,8 @@ export async function startVadRecording() {
 	settings.set('recording.trigger', 'vad');
 	// A new dictation session is starting: clear any lingering terminal state.
 	dictationLifecycle.reset();
+	// Start the live overlay transcript fresh for this session.
+	liveTranscript.reset();
 	// A capture just started, so leave the import overlay if it was open (see
 	// startManualRecording).
 	captureSurface.dismissImport();

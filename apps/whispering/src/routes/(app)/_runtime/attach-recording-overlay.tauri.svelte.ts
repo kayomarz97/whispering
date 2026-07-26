@@ -7,6 +7,7 @@ import { synchronizeRecordingOverlayWindow } from '$lib/recording-overlay/window
 import { dispatchPillAction } from '$lib/recording-pill/pill-actions';
 import { projectLifecycleToStatus } from '$lib/recording-pill/projection';
 import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
+import { liveTranscript } from '$lib/state/live-transcript.svelte';
 import { tauriOnly } from '$lib/tauri.tauri';
 import type { RuntimeOwner } from './types';
 
@@ -20,7 +21,7 @@ function attachRecordingOverlay() {
 	};
 
 	const overlayStatus = $derived(
-		projectLifecycleToStatus(dictationLifecycle.current),
+		projectLifecycleToStatus(dictationLifecycle.current, liveTranscript.text),
 	);
 
 	$effect(() => {
