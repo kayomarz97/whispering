@@ -73,9 +73,9 @@
 				{ "url": "https://api.elevenlabs.io/*" },
 				{ "url": "https://api.deepgram.com/*" },
 				{ "url": "https://api.mistral.ai/*" },
-				{ "url": "https://openrouter.ai/*" },
-				{ "url": "https://**" }
+				{ "url": "https://openrouter.ai/*" }
 			]
-		}
+		},
+		"core:webview:allow-create-webview-window"
 	]
 }
