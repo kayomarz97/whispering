@@ -29,7 +29,8 @@ pub mod recorder;
 use recorder::commands::{
     cancel_recording, clear_recording_artifacts, close_recording_session,
     delete_recording_artifacts, enumerate_recording_devices, get_current_recording_id,
-    init_recording_session, read_recording_artifact, start_recording, stop_recording,
+    init_recording_session, read_recording_artifact, save_recording_artifact, start_recording,
+    stop_recording,
 };
 use recorder::recorder::Recorder;
 
@@ -68,7 +69,6 @@ use shell::{
 #[cfg(desktop)]
 pub mod keyboard;
 
-#[cfg(target_os = "macos")]
 pub mod overlay;
 
 #[cfg(target_os = "macos")]
@@ -320,10 +320,14 @@ pub fn run() {
     let port = configured_port();
     let specta_builder = make_specta_builder();
     let specta_handler = tauri_specta::Builder::invoke_handler(&specta_builder);
+    // Commands whose IPC shape is raw bytes in or out, which tauri-specta's
+    // generated surface cannot describe. They are routed to Tauri's own handler
+    // below and wrapped by hand in TypeScript.
     let native_handler = tauri::generate_handler![
         get_runtime_info,
         encode_recording_for_upload,
-        read_recording_artifact
+        read_recording_artifact,
+        save_recording_artifact
     ] as fn(tauri::ipc::Invoke<tauri::Wry>) -> bool;
     let log_plugin = tauri_plugin_log::Builder::new()
         .level(log::LevelFilter::Info)
@@ -369,7 +373,10 @@ pub fn run() {
         .invoke_handler(move |invoke| {
             if matches!(
                 invoke.message.command(),
-                "get_runtime_info" | "encode_recording_for_upload" | "read_recording_artifact"
+                "get_runtime_info"
+                    | "encode_recording_for_upload"
+                    | "read_recording_artifact"
+                    | "save_recording_artifact"
             ) {
                 native_handler(invoke)
             } else {
@@ -841,7 +848,6 @@ fn create_surfaces_on_main_thread(
     let token = token.to_string();
     app.clone().run_on_main_thread(move || {
         let result = (|| {
-            #[cfg(target_os = "macos")]
             create_recording_overlay(&app, port, &token)?;
 
             ensure_surface(&app, Surface::Whispering, port, &token, false)?;
@@ -857,11 +863,15 @@ fn create_surfaces_on_main_thread(
         .context("the main thread stopped before creating Epicenter surfaces")?
 }
 
-#[cfg(target_os = "macos")]
+/// The overlay is a Whispering webview like any other, so it is built here rather
+/// than from JavaScript: only this path attaches the bootstrap initialization
+/// script the SPA's gated `index.html` requires to mount at all (see `overlay`).
+/// It carries no credentials — the pill only exchanges status and action events —
+/// so it boots with an empty credential store instead of reading the keyring.
 fn create_recording_overlay(app: &DesktopAppHandle, port: u16, token: &str) -> Result<()> {
     let origin = origin(port);
     let url: tauri::Url = format!("{origin}/apps/whispering/recording-overlay/").parse()?;
-    let initialization_script = initialization_script(&origin, token)?;
+    let initialization_script = initialization_script_with(&origin, token, Credentials::None)?;
     overlay::create_recording_overlay(app, url, initialization_script, port)
         .context("create the Whispering recording overlay")
 }
@@ -1007,7 +1017,6 @@ fn invalidate_surfaces(app: &DesktopAppHandle) {
                 }
             }
         }
-        #[cfg(target_os = "macos")]
         if let Some(window) = app.get_webview_window(overlay::WINDOW_LABEL) {
             if window.destroy().is_err() {
                 let _ = window.hide();
@@ -1137,7 +1146,41 @@ fn read_ready_frame(reader: &mut impl BufRead, expected_port: u16) -> Result<()>
     Ok(())
 }
 
+/// Whether a Whispering webview should preload the OS-keyring credential cell.
+///
+/// The main surface signs in, so it preloads. The recording overlay only
+/// exchanges pill status and action events and is granted no keyring authority,
+/// so asking would be an ACL denial on every launch — noise that would look like
+/// a defect. It boots with an empty store instead, which is the honest
+/// description of an overlay that can never hold a credential.
+#[derive(Clone, Copy)]
+enum Credentials {
+    Keyring,
+    None,
+}
+
 fn initialization_script(origin: &str, token: &str) -> Result<String> {
+    initialization_script_with(origin, token, Credentials::Keyring)
+}
+
+fn initialization_script_with(
+    origin: &str,
+    token: &str,
+    credentials: Credentials,
+) -> Result<String> {
+    // Both arms must settle the same way: `auth.tauri.ts` reads
+    // `__EPICENTER_WHISPERING_AUTH_BOOTSTRAP__` at module scope and throws if it
+    // is absent, and the gated `index.html` waits on
+    // `__EPICENTER_WHISPERING_AUTH_READY__` before importing anything at all.
+    let credential_ready = match credentials {
+        Credentials::Keyring => {
+            r#"window.__TAURI_INTERNALS__.invoke('keyring_read').then(
+      (serialized) => defineBootstrap({ serialized, error: null }),
+      (error) => defineBootstrap({ serialized: null, error: String(error) }),
+    )"#
+        }
+        Credentials::None => r#"Promise.resolve(defineBootstrap({ serialized: null, error: null }))"#,
+    };
     let origin = serde_json::to_string(origin)?;
     let token = serde_json::to_string(token)?;
     Ok(format!(
@@ -1158,24 +1201,15 @@ fn initialization_script(origin: &str, token: &str) -> Result<String> {
     writable: false,
   }});
   if (window.location.pathname.startsWith('/apps/whispering/')) {{
-    const credentialReady = window.__TAURI_INTERNALS__.invoke('keyring_read').then(
-      (serialized) => {{
-        Object.defineProperty(window, '__EPICENTER_WHISPERING_AUTH_BOOTSTRAP__', {{
-          value: {{ serialized, error: null }},
-          enumerable: false,
-          configurable: true,
-          writable: false,
-        }});
-      }},
-      (error) => {{
-        Object.defineProperty(window, '__EPICENTER_WHISPERING_AUTH_BOOTSTRAP__', {{
-          value: {{ serialized: null, error: String(error) }},
-          enumerable: false,
-          configurable: true,
-          writable: false,
-        }});
-      }},
-    );
+    const defineBootstrap = (value) => {{
+      Object.defineProperty(window, '__EPICENTER_WHISPERING_AUTH_BOOTSTRAP__', {{
+        value,
+        enumerable: false,
+        configurable: true,
+        writable: false,
+      }});
+    }};
+    const credentialReady = {credential_ready};
     Object.defineProperty(window, '__EPICENTER_WHISPERING_AUTH_READY__', {{
       value: credentialReady,
       enumerable: false,
@@ -1376,5 +1410,24 @@ mod tests {
         assert!(script.contains("invoke('keyring_read')"));
         assert!(!script.contains("localStorage"));
         assert!(!script.contains("sessionStorage"));
+    }
+
+    #[test]
+    fn credential_free_initialization_script_still_settles_the_whispering_gate() {
+        // The recording overlay holds no keyring authority, so it must never ask
+        // for one. It must still define both globals the SPA blocks on, or the
+        // webview renders as a blank white rectangle (the overlay bug this
+        // replaced): `index.html` awaits `__EPICENTER_WHISPERING_AUTH_READY__`
+        // before importing, and `auth.tauri.ts` throws without a bootstrap value.
+        let script = initialization_script_with(
+            "http://127.0.0.1:39130",
+            "safe_token",
+            Credentials::None,
+        )
+        .unwrap();
+        assert!(!script.contains("keyring_read"));
+        assert!(script.contains("__EPICENTER_WHISPERING_AUTH_READY__"));
+        assert!(script.contains("__EPICENTER_WHISPERING_AUTH_BOOTSTRAP__"));
+        assert!(script.contains("serialized: null, error: null"));
     }
 }

@@ -31,6 +31,7 @@
 		"allow-delete-recording-artifacts",
 		"allow-clear-recording-artifacts",
 		"allow-read-recording-artifact",
+		"allow-save-recording-artifact",
 		"allow-encode-recording-for-upload",
 		"allow-transcribe-recording",
 		"allow-prewarm-model",
@@ -75,7 +76,6 @@
 				{ "url": "https://api.mistral.ai/*" },
 				{ "url": "https://openrouter.ai/*" }
 			]
-		},
-		"core:webview:allow-create-webview-window"
+		}
 	]
 }

@@ -65,10 +65,15 @@
 	}
 </script>
 
-<!-- The pill hugs its content, so center it within the fixed overlay window (the
-     web host centers its own copy). A fixed full-window flex box centers the chip
-     regardless of how the layout nests the route. -->
-<div class="fixed inset-0 flex items-center justify-center">
+<!-- The pill hugs its content, so place it within the fixed overlay window (the
+     web host centers its own copy). A fixed full-window flex box positions the
+     chip regardless of how the layout nests the route.
+
+     Bottom-anchored, not centered: the window grows upward from the same
+     bottom-right corner when a live transcript card stacks above the pill, so
+     anchoring to the bottom edge keeps the pill itself pinned in place on screen
+     instead of jumping half the card's height every time text arrives. -->
+<div class="fixed inset-0 flex items-end justify-center">
 	<RecordingPill
 		{status}
 		{level}

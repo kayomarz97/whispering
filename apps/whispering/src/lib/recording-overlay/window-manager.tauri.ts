@@ -2,12 +2,11 @@ import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import {
 	currentMonitor,
 	LogicalPosition,
+	LogicalSize,
 	primaryMonitor,
 } from '@tauri-apps/api/window';
 import { once } from 'wellcrafted/function';
 import { createLogger } from 'wellcrafted/logger';
-import { whisperingPath } from '$lib/constants/urls';
-import { settings } from '$lib/state/settings.svelte';
 import {
 	RECORDING_OVERLAY_WINDOW_LABEL,
 	recordingOverlayReady,
@@ -21,9 +20,9 @@ const log = createLogger('whispering/recording-overlay');
 // RecordingPill); the transparent window centers the narrower states inside it.
 const OVERLAY_WIDTH = 224;
 const OVERLAY_HEIGHT = 40;
-// When live transcription is on, the overlay also shows a transcript card above
-// the pill (see RecordingPill), so the window is grown to fit it. Sized at
-// creation from the setting; a mid-session toggle takes effect next session.
+// A live transcript renders as a card stacked above the pill (see RecordingPill),
+// so the window grows to fit it: the card's own width plus the pill's horizontal
+// breathing room, and its max height plus the pill and the gap between them.
 const OVERLAY_LIVE_WIDTH = 360;
 const OVERLAY_LIVE_HEIGHT = 168;
 // Corner placement (bottom-right, next to the Windows notification area / tray).
@@ -32,9 +31,25 @@ const OVERLAY_LIVE_HEIGHT = 168;
 const OVERLAY_BOTTOM_MARGIN = 72;
 const OVERLAY_RIGHT_MARGIN = 24;
 
-/** Overlay window size, grown when live transcription is on to fit the text. */
-function overlaySize(): { width: number; height: number } {
-	return settings.get('liveTranscription.enabled')
+/**
+ * The window size for what the pill is actually rendering right now.
+ *
+ * This tracks the render condition in `RecordingPill`, not the live-transcription
+ * setting: the transcript card only exists while a VAD capture has text to show.
+ * Sizing off the setting alone left a manual recording — which never draws a card
+ * — floating inside a window four times taller than its pill. The overlay is
+ * bottom-anchored, so the pill holds its place on screen and the card grows
+ * upward as it appears.
+ */
+function overlaySize(status: RecordingPillStatus | null): {
+	width: number;
+	height: number;
+} {
+	const showsTranscript =
+		status?.phase === 'recording' &&
+		status.trigger === 'vad' &&
+		status.liveTranscript.length > 0;
+	return showsTranscript
 		? { width: OVERLAY_LIVE_WIDTH, height: OVERLAY_LIVE_HEIGHT }
 		: { width: OVERLAY_WIDTH, height: OVERLAY_HEIGHT };
 }
@@ -42,7 +57,10 @@ function overlaySize(): { width: number; height: number } {
 let latestStatus: RecordingPillStatus | null = null;
 let queue: Promise<void> = Promise.resolve();
 
-async function computeOverlayPosition(): Promise<LogicalPosition | null> {
+async function computeOverlayPosition(size: {
+	width: number;
+	height: number;
+}): Promise<LogicalPosition | null> {
 	const monitor = (await currentMonitor()) ?? (await primaryMonitor());
 	if (!monitor) return null;
 
@@ -53,9 +71,10 @@ async function computeOverlayPosition(): Promise<LogicalPosition | null> {
 	const monitorHeight = monitor.size.height / scale;
 
 	// Bottom-right corner: pin to the right edge (minus margin) instead of centering.
-	const { width, height } = overlaySize();
-	const x = monitorX + monitorWidth - width - OVERLAY_RIGHT_MARGIN;
-	const y = monitorY + monitorHeight - height - OVERLAY_BOTTOM_MARGIN;
+	// Both edges are derived from the current size, so a window that grows to fit a
+	// transcript keeps the same bottom-right anchor and expands up and to the left.
+	const x = monitorX + monitorWidth - size.width - OVERLAY_RIGHT_MARGIN;
+	const y = monitorY + monitorHeight - size.height - OVERLAY_BOTTOM_MARGIN;
 	return new LogicalPosition(x, y);
 }
 
@@ -69,53 +88,28 @@ const ensureReadyListener = once(
 			.then(() => undefined),
 );
 
-async function createOverlayWindow(): Promise<WebviewWindow | null> {
+/**
+ * The overlay window, created by Rust at startup and looked up by label.
+ *
+ * This never creates the webview itself, and that is load-bearing rather than a
+ * style choice: a webview built from JavaScript receives no initialization
+ * script, and the Whispering SPA's `index.html` blocks its module graph on a
+ * global that script defines. A JS-created overlay therefore never mounts
+ * SvelteKit and renders as a blank white rectangle. Rust owns creation so the
+ * bootstrap can't be skipped; a missing window means that creation failed, which
+ * is worth a warning and no overlay rather than a white box on the user's screen.
+ */
+async function getOverlayWindow(): Promise<WebviewWindow | null> {
 	await ensureReadyListener();
-	const overlayUrl = new URL(
-		whisperingPath('/recording-overlay'),
-		window.location.origin,
-	).href;
-
-	const { width, height } = overlaySize();
-	const overlay = new WebviewWindow(RECORDING_OVERLAY_WINDOW_LABEL, {
-		url: overlayUrl,
-		title: 'Recording',
-		width,
-		height,
-		transparent: true,
-		decorations: false,
-		shadow: false,
-		alwaysOnTop: true,
-		visibleOnAllWorkspaces: true,
-		skipTaskbar: true,
-		resizable: false,
-		maximizable: false,
-		minimizable: false,
-		closable: false,
-		focus: false,
-		focusable: false,
-		visible: false,
-	});
-
-	return new Promise<WebviewWindow | null>((resolve) => {
-		overlay.once('tauri://created', () => resolve(overlay));
-		overlay.once('tauri://error', (event) => {
-			log.warn(
-				new Error(
-					`Failed to create recording overlay window: ${JSON.stringify(event.payload)}`,
-				),
-			);
-			resolve(null);
-		});
-	});
-}
-
-async function getOrCreateOverlayWindow(): Promise<WebviewWindow | null> {
-	const existing = await WebviewWindow.getByLabel(
-		RECORDING_OVERLAY_WINDOW_LABEL,
-	);
-	if (existing) return existing;
-	return createOverlayWindow();
+	const overlay = await WebviewWindow.getByLabel(RECORDING_OVERLAY_WINDOW_LABEL);
+	if (!overlay) {
+		log.warn(
+			new Error(
+				`No "${RECORDING_OVERLAY_WINDOW_LABEL}" window: the native overlay was not created at startup.`,
+			),
+		);
+	}
+	return overlay;
 }
 
 async function applyOverlayStatus(status: RecordingPillStatus | null) {
@@ -130,10 +124,19 @@ async function applyOverlayStatus(status: RecordingPillStatus | null) {
 		return;
 	}
 
-	const overlay = await getOrCreateOverlayWindow();
+	const overlay = await getOverlayWindow();
 	if (!overlay || isSuperseded()) return;
 
-	const position = await computeOverlayPosition();
+	// Size before position: the anchor is the bottom-right corner, so the
+	// position is derived from the size we are about to apply. Setting both on
+	// every status keeps the window fitted to what the pill draws, so a
+	// transcript appearing (or the mode changing mid-session) resizes it now
+	// rather than at the next launch.
+	const size = overlaySize(status);
+	await overlay.setSize(new LogicalSize(size.width, size.height));
+	if (isSuperseded()) return;
+
+	const position = await computeOverlayPosition(size);
 	if (isSuperseded()) return;
 	if (position) await overlay.setPosition(position);
 	if (isSuperseded()) return;
