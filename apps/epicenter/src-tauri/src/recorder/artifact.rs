@@ -237,6 +237,77 @@ pub fn write_artifact(
     })
 }
 
+/// Validate a caller-supplied artifact extension. Only a short alphanumeric
+/// token is accepted, which keeps `{id}.{extension}` a single filename
+/// component no matter what the WebView sends, and keeps the result matchable
+/// by `find_recording_path`'s `{id}.*` scan.
+fn validate_artifact_extension(extension: &str) -> Result<(), RecorderError> {
+    if extension.is_empty() || extension.len() > 8 {
+        return Err(RecorderError::failed(format!(
+            "artifact extension '{extension}' must be 1-8 characters"
+        )));
+    }
+    if !extension.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(RecorderError::failed(format!(
+            "artifact extension '{extension}' must be alphanumeric"
+        )));
+    }
+    Ok(())
+}
+
+/// Persist already-encoded container bytes as the artifact for `id`.
+///
+/// The cpal recorder writes its own WAV through `write_artifact`; this is the
+/// path for the producers that hand over a finished blob instead of PCM — the
+/// VAD recorder (MediaRecorder WebM/Opus) and file import. Without it those
+/// paths have nowhere to put their bytes, so voice-activated capture and import
+/// fail before transcription is ever attempted.
+///
+/// The container is stored verbatim under its own extension rather than being
+/// transcoded: the bytes go to a cloud recognizer that accepts these containers
+/// directly, and re-encoding here would need a decoder for every format a
+/// browser or a user's file might use. `find_recording_path` already resolves an
+/// id to any extension, which is what makes this safe to mix with `.wav`.
+///
+/// Any artifact already stored under this id is removed first, whatever its
+/// extension, so one id can never resolve to two files.
+pub fn write_artifact_bytes(
+    app: &AppHandle,
+    id: &str,
+    extension: &str,
+    bytes: &[u8],
+) -> Result<u64, RecorderError> {
+    validate_recording_id(id)?;
+    validate_artifact_extension(extension)?;
+
+    let dir = recordings_dir(app)?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        RecorderError::failed(format!("create recordings dir {}: {e}", dir.display()))
+    })?;
+
+    delete_artifacts(app, std::slice::from_ref(&id.to_string()))?;
+
+    let path = dir.join(format!("{id}.{extension}"));
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(&path)
+        .map_err(|e| RecorderError::failed(format!("open artifact {}: {e}", path.display())))?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(bytes).map_err(io_err(&path))?;
+    let file = writer
+        .into_inner()
+        .map_err(|e| RecorderError::failed(format!("flush artifact {}: {e}", path.display())))?;
+    // fsync before returning, matching `write_pcm_as_wav`: the caller
+    // transcribes by id immediately after, so a partially flushed file would
+    // surface as a corrupt-audio error rather than a write error.
+    file.sync_all()
+        .map_err(|e| RecorderError::failed(format!("sync artifact {}: {e}", path.display())))?;
+
+    Ok(bytes.len() as u64)
+}
+
 /// Read and decode an artifact to 16 kHz mono f32 PCM. Shared by the
 /// transcribe-from-recording-id path and the cloud-upload re-encode path.
 /// Accepts any container Symphonia can decode (cpal-written WAV,
@@ -376,6 +447,20 @@ mod tests {
         assert!(validate_recording_id("abc123").is_ok());
         assert!(validate_recording_id("V1StGXR8_Z5jdHi6B-myT").is_ok());
         assert!(validate_recording_id("rec_2026-05-26T12-34-56").is_ok());
+    }
+
+    #[test]
+    fn artifact_extension_rejects_anything_that_is_not_a_short_token() {
+        assert!(validate_artifact_extension("webm").is_ok());
+        assert!(validate_artifact_extension("wav").is_ok());
+        assert!(validate_artifact_extension("mp4").is_ok());
+        // A path component, a traversal, or a hidden second extension must never
+        // reach the filesystem through the blob store's `save`.
+        assert!(validate_artifact_extension("").is_err());
+        assert!(validate_artifact_extension("../evil").is_err());
+        assert!(validate_artifact_extension("wav/x").is_err());
+        assert!(validate_artifact_extension("tar.gz").is_err());
+        assert!(validate_artifact_extension("waaaaaaaaay-too-long").is_err());
     }
 
     #[test]

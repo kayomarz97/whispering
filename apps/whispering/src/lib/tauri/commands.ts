@@ -113,10 +113,38 @@ async function readRecordingArtifact(
 	}
 }
 
+/**
+ * Persist already-encoded audio bytes as the artifact for a recording id.
+ *
+ * The mirror image of the raw-response commands: the payload is the audio
+ * itself, sent as a raw IPC body rather than a JSON argument, because Tauri
+ * serializes a `number[]` argument as text and a few minutes of audio would
+ * become several megabytes of JSON. Tauri routes an `ArrayBuffer`-like payload
+ * as raw bytes, so the id and extension travel as headers instead.
+ */
+async function saveRecordingArtifact(
+	recordingId: string,
+	extension: string,
+	bytes: ArrayBuffer,
+): Promise<Result<void, string>> {
+	try {
+		await rawInvoke<void>('save_recording_artifact', new Uint8Array(bytes), {
+			headers: {
+				'recording-id': recordingId,
+				'artifact-extension': extension,
+			},
+		});
+		return Ok(undefined);
+	} catch (e) {
+		return Err(String(e));
+	}
+}
+
 export const commands = {
 	...wrappedGen,
 	encodeRecordingForUpload,
 	readRecordingArtifact,
+	saveRecordingArtifact,
 };
 
 export type {

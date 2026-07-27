@@ -1,26 +1,40 @@
 import { tryAsync } from 'wellcrafted/result';
 import { commands } from '$lib/tauri/commands';
+import {
+	artifactExtensionForMimeType,
+	sniffAudioMimeType,
+} from './audio-container';
 import { BlobError, type BlobStore } from './types';
 
-const NATIVE_ARTIFACT_MIME_TYPE = 'audio/wav';
-
 /**
- * Native CPAL artifacts are owned by Rust and addressed only by recording id.
- * The WebView receives bytes for playback, never a filesystem path.
+ * Recording artifacts are owned by Rust and addressed only by recording id. The
+ * WebView passes bytes and an id across a focused command; it never sees, or
+ * names, a filesystem path.
  *
- * Browser Blob, VAD, and import persistence is intentionally deferred for the
- * first native milestone. Calling `save` reports that unsupported boundary
- * instead of quietly granting generic filesystem write authority.
+ * The cpal recorder writes its own WAV inside Rust. This store covers the
+ * producers that arrive with a finished container instead of PCM — the VAD
+ * recorder's MediaRecorder blobs and file import — which is what makes
+ * voice-activated capture (and the live transcription built on it) work at all
+ * on desktop.
  */
 export function createFileSystemBlobStore() {
 	const urlCache = new Map<string, string>();
 
 	return {
-		async save(_key, _blob) {
-			return BlobError.WriteFailed({
-				cause: new Error(
-					'Desktop Blob, VAD, and import artifact persistence is not available yet',
-				),
+		async save(key, blob) {
+			return tryAsync({
+				try: async () => {
+					// The container is preserved rather than transcoded, so the
+					// extension has to come from the blob: it is how the artifact is
+					// later recognized, and how the cloud wire is told what it is.
+					const { error } = await commands.saveRecordingArtifact(
+						key,
+						artifactExtensionForMimeType(blob.type),
+						await blob.arrayBuffer(),
+					);
+					if (error !== null) throw new Error(error);
+				},
+				catch: (error) => BlobError.WriteFailed({ cause: error }),
 			});
 		},
 
@@ -40,7 +54,12 @@ export function createFileSystemBlobStore() {
 				try: async () => {
 					const { data, error } = await commands.readRecordingArtifact(key);
 					if (error !== null) throw new Error(error);
-					return new Blob([data], { type: NATIVE_ARTIFACT_MIME_TYPE });
+					// The container is read from the bytes rather than assumed: this
+					// blob's type decides the upload filename's extension, which is how
+					// the transcription wire detects the audio format. Labelling a WebM
+					// artifact `audio/wav` uploads it as `audio.wav` and the provider
+					// rejects it.
+					return new Blob([data], { type: sniffAudioMimeType(data) });
 				},
 				catch: (error) => BlobError.ReadFailed({ cause: error }),
 			});

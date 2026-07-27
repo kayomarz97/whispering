@@ -24,6 +24,7 @@ const COMMANDS: &[&str] = &[
     "delete_recording_artifacts",
     "clear_recording_artifacts",
     "read_recording_artifact",
+    "save_recording_artifact",
     "encode_recording_for_upload",
     "transcribe_recording",
     "prewarm_model",

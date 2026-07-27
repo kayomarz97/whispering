@@ -1,12 +1,14 @@
 use crate::recorder::artifact::{
-    clear_artifacts, delete_artifacts, read_artifact_bytes, write_artifact, RecordingArtifact,
+    clear_artifacts, delete_artifacts, read_artifact_bytes, write_artifact, write_artifact_bytes,
+    RecordingArtifact,
 };
 use crate::recorder::error::RecorderError;
 use crate::recorder::recorder::{Recorder, Result};
 use log::{debug, info, warn};
 use serde::Serialize;
 use std::sync::Mutex;
-use tauri::ipc::Response;
+use tauri::http::HeaderMap;
+use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, State};
 
 const RECORDER_STATE_CHANGED: &str = "recorder:state-changed";
@@ -219,4 +221,54 @@ pub async fn read_recording_artifact(
         .map_err(|e| format!("background artifact read failed: {e}"))?
         .map(Response::new)
         .map_err(|e| e.to_string())
+}
+
+/// One header value as a `String`, or a message naming what was missing.
+fn required_header(headers: &HeaderMap, name: &str) -> std::result::Result<String, String> {
+    headers
+        .get(name)
+        .ok_or_else(|| format!("missing '{name}' header"))?
+        .to_str()
+        .map(str::to_string)
+        .map_err(|e| format!("invalid '{name}' header: {e}"))
+}
+
+/// Persist already-encoded audio bytes as the artifact for a recording id.
+///
+/// The producers that hand over a finished container rather than PCM — the VAD
+/// recorder and file import — reach the recordings directory through here.
+/// Without it both fail with "we could not write the recording bytes" before
+/// transcription is ever attempted, which is what took voice-activated capture
+/// (and with it live transcription) off the table on desktop.
+///
+/// The audio rides the IPC as a raw body rather than a JSON argument:
+/// serializing a multi-megabyte recording as an array of numbers is slow and
+/// several times larger than the audio itself. The id and extension ride
+/// alongside as headers. Like the other raw-body commands, this lives outside
+/// tauri-specta and has a handwritten TypeScript wrapper.
+///
+/// The frontend never names a path: it supplies an id and an extension, both
+/// validated in `artifact.rs` before anything touches the filesystem, so this
+/// grants persistence for recordings and not generic filesystem write authority.
+#[tauri::command]
+pub async fn save_recording_artifact(
+    request: Request<'_>,
+    app_handle: AppHandle,
+) -> std::result::Result<(), String> {
+    let InvokeBody::Raw(bytes) = request.body() else {
+        return Err("save_recording_artifact expects a raw byte body".to_string());
+    };
+    let recording_id = required_header(request.headers(), "recording-id")?;
+    let extension = required_header(request.headers(), "artifact-extension")?;
+    let bytes = bytes.clone();
+
+    let byte_length = tauri::async_runtime::spawn_blocking(move || {
+        write_artifact_bytes(&app_handle, &recording_id, &extension, &bytes)
+    })
+    .await
+    .map_err(|e| format!("background artifact write failed: {e}"))?
+    .map_err(|e| e.to_string())?;
+
+    info!("Saved recording artifact: {byte_length} bytes");
+    Ok(())
 }
