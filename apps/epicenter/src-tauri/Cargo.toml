@@ -42,7 +42,14 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-dialog = "2.7"
 tauri-plugin-global-shortcut = "2"
-tauri-plugin-http = "2"
+# Pinned exactly, and kept in lockstep with `@tauri-apps/plugin-http` in
+# apps/whispering/package.json. The two halves speak a private IPC protocol that
+# changed inside the 2.5.x line: 2.5.4 streams the response body over a Tauri
+# channel, 2.5.9 returns it chunk-by-chunk from repeated `fetch_read_body` calls.
+# Mismatched halves do not error — the body is silently dropped and every
+# `await response.json()` hangs forever, which is what broke cloud transcription.
+# `scripts/check-tauri-plugin-versions.ts` fails the build if they ever drift.
+tauri-plugin-http = "=2.5.9"
 tauri-plugin-log = "2"
 tauri-plugin-macos-permissions = "2.3.0"
 tauri-plugin-notification = "2"
