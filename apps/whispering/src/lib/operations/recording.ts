@@ -16,6 +16,7 @@ import { deviceConfig } from '$lib/state/device-config.svelte';
 import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
 import { liveTranscript } from '$lib/state/live-transcript.svelte';
 import { manualRecorder } from '$lib/state/manual-recorder.svelte';
+import { overlayTranscript } from '$lib/state/overlay-transcript.svelte';
 import { settings } from '$lib/state/settings.svelte';
 import { vadRecorder } from '$lib/state/vad-recorder.svelte';
 
@@ -250,12 +251,47 @@ function cancelPendingVadResume() {
 	vadResumeTimer = undefined;
 }
 
+// A voice-activated session disarms itself after a stretch of silence
+// (`recording.vadSilenceTimeoutSeconds`, 0 to never). An armed session is
+// invisible once the overlay leaves the corner of your eye and it is not free:
+// it holds the microphone, and whatever it decides is speech is transcribed and
+// billed. So a session nobody is speaking into ends itself instead of waiting
+// for a film, a call, or a conversation in the room to feed it.
+//
+// The countdown measures silence and nothing else: it is dropped the moment
+// speech latches and restarted from the pause that ends each phrase, so it can
+// never cut off someone mid-dictation, only someone who has stopped.
+let vadSilenceTimer: ReturnType<typeof setTimeout> | undefined;
+
+function clearVadSilenceTimeout() {
+	clearTimeout(vadSilenceTimer);
+	vadSilenceTimer = undefined;
+}
+
+function restartVadSilenceTimeout() {
+	clearVadSilenceTimeout();
+	const timeoutSeconds = settings.get('recording.vadSilenceTimeoutSeconds');
+	if (timeoutSeconds <= 0) return;
+	vadSilenceTimer = setTimeout(() => {
+		vadSilenceTimer = undefined;
+		// Re-check rather than trusting the timer: a session that already ended
+		// leaves nothing to stop, and stopVadRecording would no-op anyway.
+		if (!isVadRecordingActive()) return;
+		log.info(
+			`Voice activated capture idle for ${timeoutSeconds}s, stopping listening`,
+		);
+		void stopVadRecording();
+	}, timeoutSeconds * 1000);
+}
+
 export async function startVadRecording() {
 	settings.set('recording.trigger', 'vad');
 	// A new dictation session is starting: clear any lingering terminal state.
 	dictationLifecycle.reset();
-	// Start the live overlay transcript fresh for this session.
+	// Start the live overlay transcript fresh for this session, unfolded: a card
+	// folded away during the last session has nothing to say about this one.
 	liveTranscript.reset();
+	overlayTranscript.reset();
 	// A capture just started, so leave the import overlay if it was open (see
 	// startManualRecording).
 	captureSurface.dismissImport();
@@ -299,11 +335,23 @@ export async function startVadRecording() {
 			// Speaking window opened: pause whatever is playing. The pill's meter
 			// tint shows speech was detected, so there is no toast.
 			pausePlaybackForSpeech();
+			// Someone is talking, so the idle countdown has no claim until they
+			// stop again.
+			clearVadSilenceTimeout();
+			// Speaking is activity too: bring back a card the idle timer folded,
+			// rather than making the user wait for the phrase to transcribe.
+			overlayTranscript.noteActivity(
+				settings.get('liveTranscription.overlayHideSeconds'),
+			);
 		},
 		onSpeechEnd: async (blob) => {
 			// Speaking window closed: resume after a short debounce so a quick
 			// next utterance does not flutter the music.
 			scheduleResumeAfterSpeech();
+			// The silence the user cares about starts here, at the pause — not
+			// after this phrase finishes transcribing, which is work they are not
+			// waiting on and which can take seconds over a cloud provider.
+			restartVadSilenceTimeout();
 			log.info('Voice activated speech captured');
 			sound.playSoundIfEnabled('vad-capture');
 
@@ -326,6 +374,9 @@ export async function startVadRecording() {
 			// False start: schedule the same debounced resume as a real speech
 			// end, so an immediate retry does not flutter the music.
 			scheduleResumeAfterSpeech();
+			// A blip that was not speech leaves the session as idle as it was, so
+			// the countdown restarts rather than being spent by the misfire.
+			restartVadSilenceTimeout();
 		},
 	});
 
@@ -335,6 +386,10 @@ export async function startVadRecording() {
 		dictationLifecycle.markFailed({ tier: 'silent-loss', error });
 		return;
 	}
+
+	// Armed with nothing said yet: start the idle countdown now, so a session
+	// armed by mistake and left alone closes itself without ever hearing a word.
+	restartVadSilenceTimeout();
 
 	// The pill shows the armed session; only a device fallback needs a notice.
 	reportDeviceAcquisitionOutcome(outcome, (deviceId) =>
@@ -347,6 +402,9 @@ export async function startVadRecording() {
 export async function stopVadRecording() {
 	if (!isVadRecordingActive()) return;
 
+	// The session is ending by whichever route; the idle countdown has nothing
+	// left to disarm.
+	clearVadSilenceTimeout();
 	log.info('Stopping voice activated capture');
 	const { data, error } = await vadRecorder.stopActiveListening();
 	// Disarming ends the session: restore playback now, do not wait on the
