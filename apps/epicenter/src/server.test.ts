@@ -540,6 +540,19 @@ describe('createQueryServer', () => {
 			expect(page.headers.get('content-security-policy')).not.toContain(
 				"script-src 'self' 'unsafe-inline'",
 			);
+			// WebAssembly must be compilable and `eval()` must not be. Whispering's
+			// voice-activated capture runs the Silero VAD model on ONNX Runtime, which
+			// is WebAssembly: without `wasm-unsafe-eval` the runtime aborts on
+			// `WebAssembly.instantiate()`, the model never loads, and "start listening"
+			// fails silently. Granting `unsafe-eval` instead would fix VAD by also
+			// handing every script on the surface `eval()`, which is not the trade
+			// being made here.
+			const csp = page.headers.get('content-security-policy') ?? '';
+			expect(csp).toContain("'wasm-unsafe-eval'");
+			expect(csp).not.toContain("'unsafe-eval' ");
+			expect(csp.split('; ').find((d) => d.startsWith('script-src'))).not.toMatch(
+				/(?<!wasm-)'unsafe-eval'/,
+			);
 			expect(page.headers.get('referrer-policy')).toBe('no-referrer');
 			expect(page.headers.get('x-frame-options')).toBe('DENY');
 		} finally {
@@ -857,7 +870,7 @@ describe('the built SPA', () => {
 			expect(response.status).toBe(200);
 			expect(await response.text()).toBe(page);
 			expect(response.headers.get('content-security-policy')).toMatch(
-				/script-src 'self' 'sha256-/,
+				/script-src 'self' 'wasm-unsafe-eval' 'sha256-/,
 			);
 		} finally {
 			await server.stop(true);

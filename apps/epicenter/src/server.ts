@@ -225,7 +225,18 @@ function contentSecurityPolicy(page: string): string {
 		);
 	return [
 		"default-src 'self'",
-		`script-src 'self' ${scriptHashes.join(' ')}`,
+		// `wasm-unsafe-eval` is what lets the surfaces compile WebAssembly. Whispering's
+		// voice-activated capture runs the Silero VAD model on ONNX Runtime, which is
+		// WebAssembly; without this the runtime aborts with "WebAssembly.instantiate()
+		// violates the following Content Security Policy directive", the VAD model never
+		// loads, and "start listening" fails silently — taking pause-triggered live
+		// transcription with it.
+		//
+		// This is deliberately not `unsafe-eval`: that would also re-enable `eval()` and
+		// `new Function()` for every script on the surface. `wasm-unsafe-eval` grants
+		// WebAssembly compilation and nothing else, which is the whole of what the model
+		// needs. Scripts still have to come from `self` or match a hash.
+		`script-src 'self' 'wasm-unsafe-eval' ${scriptHashes.join(' ')}`,
 		"style-src 'self' 'unsafe-inline'",
 		"connect-src 'self' ipc: http://ipc.localhost",
 		"img-src 'self' data: blob:",
