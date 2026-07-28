@@ -482,3 +482,40 @@ holding `core:default` can enumerate monitors with no extra grant.
 therefore never goes silent, so anything that waits on silence (a VAD idle timeout, an
 end-of-speech timer) will never fire under it. Generate a silent WAV — 44-byte header plus
 zeroed PCM — and point the flag at that to test those paths.
+
+### Svelte 5 — `$state` proxies break identity checks (verified 2026-07-28)
+
+`$state` **deep-proxies** plain objects and arrays assigned to it. A value read back out of
+a `$state` variable is the proxy, not the object that was stored, so:
+
+```ts
+let outcome = $state<Outcome>({ kind: 'none' });
+const held = { kind: 'failed' } as const;
+outcome = held;
+outcome === held;   // false — `outcome` is a proxy of `held`
+```
+
+This bites hardest in "retire this after N ms unless something newer replaced it" guards,
+which look correct, typecheck, and silently never fire. Use a generation counter (or compare
+a discriminant field) instead of identity.
+
+Not affected: values that never pass through `$state`, and `$derived`, which returns the
+computed value rather than a proxy — a module-level `let latest = derivedValue` can still be
+compared by identity against the same object.
+
+### Biome in this monorepo (verified 2026-07-28)
+
+`lint:check` is what CI gates, and it passes on code that `biome check` rejects: `check`
+additionally runs the formatter and the `assist/source/organizeImports` rule. An autofix
+workflow runs the fuller command afterwards and commits the rewrite, so run
+`bunx --bun biome check --write <the files you changed>` before committing to avoid a bot
+commit rewriting every line.
+
+`**/*.svelte` and `**/*.md` are excluded from Biome by the root `biome.jsonc`; TOML and Rust
+are not handled at all.
+
+Beware a false positive on Windows: `biome check` reads the **working copy**, and with
+`core.autocrlf=true` Git checks files out with CRLF while storing LF. Biome then reports
+every such file as needing reformatting even though the committed blob is already correct.
+`git ls-files --eol` is the authority — `i/lf` means the commit is fine. Do not "fix"
+files you did not otherwise change; you would only be rewriting your own working copy.
