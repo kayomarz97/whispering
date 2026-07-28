@@ -22,11 +22,35 @@ export type RecordingPillStatus =
 			 * Shown as building text below the meter in the overlay.
 			 */
 			liveTranscript: string;
+			/**
+			 * The transcript card is folded away, leaving only a chevron chip to
+			 * bring it back. Set either by the user's minimize control or by the
+			 * idle timer (`liveTranscription.overlayHideSeconds`), because both
+			 * mean the same thing to the pill: draw the chip, not the card.
+			 *
+			 * The desktop overlay window is sized from what the pill renders, so a
+			 * collapsed card also shrinks the window — which is the point. A card
+			 * left up keeps a 360x168 window over whatever the user is reading, and
+			 * that window swallows every click inside it.
+			 */
+			transcriptCollapsed: boolean;
 	  }
 	| { phase: 'transcribing' }
 	| { phase: 'polishing' }
 	| { phase: 'delivered'; reach: DeliveryReach }
 	| { phase: 'failed'; tier: DictationFailureTier };
 
-/** A control gesture emitted by either mount of the shared recording pill. */
-export type RecordingPillAction = 'stop' | 'cancel' | 'ship-raw';
+/**
+ * A control gesture emitted by either mount of the shared recording pill.
+ *
+ * `toggle-transcript` folds the live transcript card away (or brings it back).
+ * It is a gesture rather than local component state because the desktop pill
+ * lives in its own webview while the window that must resize around it is owned
+ * by the main window: the main window holds the fold state, so the card and the
+ * window it sits in can never disagree.
+ */
+export type RecordingPillAction =
+	| 'stop'
+	| 'cancel'
+	| 'ship-raw'
+	| 'toggle-transcript';

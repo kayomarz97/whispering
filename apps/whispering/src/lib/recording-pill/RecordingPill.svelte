@@ -3,6 +3,8 @@
 	import { cn } from '@epicenter/ui/utils';
 	import AudioLinesIcon from '@lucide/svelte/icons/audio-lines';
 	import CheckIcon from '@lucide/svelte/icons/check';
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
+	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
 	import MicIcon from '@lucide/svelte/icons/mic';
 	import SquareIcon from '@lucide/svelte/icons/square';
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
@@ -26,6 +28,8 @@
 		onCancel,
 		onShipRaw,
 		onReveal,
+		onToggleTranscript,
+		onDragStart,
 	}: {
 		/** What to display, or `null` when the dictation is idle (hidden). */
 		status: RecordingPillStatus | null;
@@ -39,7 +43,65 @@
 		onShipRaw: () => void;
 		/** Reveal Whispering by raising the main window (desktop). */
 		onReveal?: () => void;
+		/** Fold the live transcript card away, or bring it back. */
+		onToggleTranscript?: () => void;
+		/**
+		 * Hand the pill's window over to the OS move loop (desktop). Called once
+		 * per gesture, after the pointer has travelled far enough to be a drag
+		 * rather than a click. Absent on web, where the pill is an element in the
+		 * page and there is no window to move.
+		 */
+		onDragStart?: () => void;
 	} = $props();
+
+	// Dragging the overlay and clicking it to reveal Whispering share one pointer,
+	// so they are separated by distance rather than by target. `startDragging`
+	// hands the pointer to the OS move loop, which never returns a `pointerup` or a
+	// `click` to this document — so calling it on `pointerdown` would silently
+	// delete the reveal gesture. Instead the press is watched until it travels
+	// DRAG_THRESHOLD_PX, and only then becomes a drag; anything shorter stays a
+	// click. The flag then suppresses the trailing `click` in the case where the
+	// window manager does deliver one.
+	const DRAG_THRESHOLD_PX = 4;
+	let pressOrigin: { x: number; y: number } | null = null;
+	let didDrag = $state(false);
+
+	function onDragSurfacePointerDown(event: PointerEvent) {
+		if (!onDragStart || event.button !== 0) return;
+		pressOrigin = { x: event.clientX, y: event.clientY };
+		didDrag = false;
+	}
+
+	function onDragSurfacePointerMove(event: PointerEvent) {
+		if (!onDragStart || !pressOrigin || didDrag) return;
+		const travelled = Math.hypot(
+			event.clientX - pressOrigin.x,
+			event.clientY - pressOrigin.y,
+		);
+		if (travelled < DRAG_THRESHOLD_PX) return;
+		didDrag = true;
+		pressOrigin = null;
+		onDragStart();
+	}
+
+	function onDragSurfacePointerUp() {
+		pressOrigin = null;
+	}
+
+	/** Reveal, unless this press was really a drag. */
+	function onPillClick() {
+		if (didDrag) {
+			didDrag = false;
+			return;
+		}
+		onReveal?.();
+	}
+
+	/** How much text is folded away, so the collapsed chip still says something. */
+	function wordCount(text: string): number {
+		const words = text.trim().split(/\s+/).filter(Boolean);
+		return words.length;
+	}
 
 	// Narrow the status to its live-recording variants once, so the template reads
 	// the discriminated fields directly (manual vs vad, speech latched, a previous
@@ -122,11 +184,61 @@
 	     With no transcript this collapses to just the pill, unchanged. -->
 	<div class="flex flex-col items-center gap-2">
 		{#if recording && recording.trigger === 'vad' && recording.liveTranscript}
-			<div
-				class="max-h-[96px] w-[340px] overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f11]/90 px-3.5 py-2.5 text-left text-[13px] leading-snug text-white/90 backdrop-blur-md select-none"
-			>
-				{recording.liveTranscript}
-			</div>
+			{#if recording.transcriptCollapsed}
+				{@const words = wordCount(recording.liveTranscript)}
+				<!-- Folded away: a chip barely taller than a line of text, so the
+				     desktop overlay window shrinks back to near the pill's own
+				     footprint and stops covering (and swallowing clicks over) what is
+				     behind it. It still reports how much text is waiting, so folding
+				     never reads as "the transcript was lost". -->
+				<button
+					type="button"
+					class="flex h-6 items-center gap-1.5 rounded-full border border-white/10 bg-[#0f0f11]/80 px-2.5 text-[11px] font-medium text-white/70 backdrop-blur-md transition duration-150 select-none hover:text-white/95"
+					aria-label="Show live transcript"
+					title="Show live transcript"
+					onpointerdown={onDragSurfacePointerDown}
+					onpointermove={onDragSurfacePointerMove}
+					onpointerup={onDragSurfacePointerUp}
+					onclick={(event) => {
+						event.stopPropagation();
+						if (didDrag) {
+							didDrag = false;
+							return;
+						}
+						onToggleTranscript?.();
+					}}
+				>
+					<ChevronUpIcon class="size-3.5" />
+					{words}
+					{words === 1 ? 'word' : 'words'}
+				</button>
+			{:else}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					class="relative max-h-[96px] w-[340px] overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f11]/90 py-2.5 pr-9 pl-3.5 text-left text-[13px] leading-snug text-white/90 backdrop-blur-md select-none"
+					onpointerdown={onDragSurfacePointerDown}
+					onpointermove={onDragSurfacePointerMove}
+					onpointerup={onDragSurfacePointerUp}
+				>
+					{recording.liveTranscript}
+					<button
+						type="button"
+						class={cn(
+							actionBase,
+							'absolute top-1.5 right-1.5 size-5 hover:bg-white/20',
+						)}
+						aria-label="Hide live transcript"
+						title="Hide live transcript"
+						onpointerdown={(event) => event.stopPropagation()}
+						onclick={(event) => {
+							event.stopPropagation();
+							onToggleTranscript?.();
+						}}
+					>
+						<ChevronDownIcon class="size-3.5" />
+					</button>
+				</div>
+			{/if}
 		{/if}
 	<div
 		class={cn(
@@ -149,13 +261,29 @@
 				: 'border border-white/10 bg-[#0f0f11]/80',
 			onReveal && 'cursor-pointer',
 		)}
-		title={onReveal ? 'Open Whispering' : undefined}
-		onclick={onReveal}
+		title={onDragStart
+			? 'Drag to move · click to open Whispering'
+			: onReveal
+				? 'Open Whispering'
+				: undefined}
+		onpointerdown={onDragSurfacePointerDown}
+		onpointermove={onDragSurfacePointerMove}
+		onpointerup={onDragSurfacePointerUp}
+		onclick={onPillClick}
 	>
 		{#if recording}
 			{@const stopLabel =
 				recording.trigger === 'manual' ? 'Stop recording' : 'Stop listening'}
-			<div class="flex items-center text-white/80">
+			<!-- The mode icon doubles as the visible grab affordance: the whole pill
+			     drags, but a lone icon gives no hint that it can be moved, so this
+			     one carries the grab cursor. On web there is no window to move and it
+			     stays a plain icon. -->
+			<div
+				class={cn(
+					'flex size-6 items-center justify-center rounded-full text-white/80',
+					onDragStart && 'cursor-grab active:cursor-grabbing hover:bg-white/10',
+				)}
+			>
 				{#if recording.trigger === 'manual'}
 					<MicIcon class="size-4" />
 				{:else}

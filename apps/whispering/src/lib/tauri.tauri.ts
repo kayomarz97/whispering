@@ -48,6 +48,7 @@ import mime from 'mime';
 import { defineErrors, extractErrorMessage } from 'wellcrafted/error';
 import { defineKeys } from 'wellcrafted/query';
 import { Ok, tryAsync } from 'wellcrafted/result';
+import { resetOverlayPosition } from '$lib/recording-overlay/window-manager.tauri';
 import { defineMutation, defineQuery, queryClient } from '$lib/rpc/client';
 import type {
 	DictationCapability,
@@ -408,6 +409,16 @@ const opener = {
 		}),
 };
 
+// recordingOverlay --------------------------------------------------
+// The overlay window is remembered wherever the user drags it. Forgetting that
+// spot is a settings gesture, so it has to be reachable from shared settings
+// code — which cannot import the Tauri-only window manager directly without
+// dragging `@tauri-apps/*` into the browser bundle. Exposing it through this
+// seam is how every other desktop-only capability reaches a shared surface.
+const recordingOverlay = {
+	resetPosition: resetOverlayPosition,
+};
+
 /**
  * The app's main window. `focus()` raises and focuses it, used when a global
  * shortcut needs to surface in-app UI (the recipe picker) over whatever the user
@@ -441,6 +452,7 @@ export const tauriOnly = {
 	transcription,
 	opener,
 	mainWindow,
+	recordingOverlay,
 };
 
 /** Shape of the Tauri capability namespace (non-null). */

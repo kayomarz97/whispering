@@ -5,7 +5,9 @@ import {
 } from '$lib/operations/recording';
 import type { RecordingPillAction } from '$lib/recording-pill/model';
 import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
+import { overlayTranscript } from '$lib/state/overlay-transcript.svelte';
 import { polishHud } from '$lib/state/polish-hud.svelte';
+import { settings } from '$lib/state/settings.svelte';
 
 /**
  * The pill's control gestures, mapped to operations in one place. Both pill
@@ -24,6 +26,16 @@ export function dispatchPillAction(action: RecordingPillAction): void {
 	// ahead of the live-capture guard below.
 	if (action === 'ship-raw') {
 		polishHud.shipRaw();
+		return;
+	}
+	// Folding the transcript card is a display gesture, not a capture one, so it
+	// also sits ahead of the guard. It is dispatched here rather than kept in the
+	// pill because on desktop the pill is in its own webview while the window that
+	// must resize around the fold belongs to the main window.
+	if (action === 'toggle-transcript') {
+		overlayTranscript.toggle(
+			settings.get('liveTranscription.overlayHideSeconds'),
+		);
 		return;
 	}
 	const { capture } = dictationLifecycle.current;

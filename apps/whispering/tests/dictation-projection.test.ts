@@ -50,6 +50,7 @@ describe('dictation pill projection', () => {
 			phase: 'recording',
 			trigger: 'vad',
 			liveTranscript: '',
+			transcriptCollapsed: false,
 			isSpeaking: false,
 			isTranscribing: false,
 		});
@@ -60,6 +61,7 @@ describe('dictation pill projection', () => {
 			phase: 'recording',
 			trigger: 'vad',
 			liveTranscript: '',
+			transcriptCollapsed: false,
 			isSpeaking: false,
 			isTranscribing: true,
 		});
@@ -70,6 +72,7 @@ describe('dictation pill projection', () => {
 			phase: 'recording',
 			trigger: 'vad',
 			liveTranscript: '',
+			transcriptCollapsed: false,
 			isSpeaking: true,
 			isTranscribing: false,
 		});
@@ -82,6 +85,7 @@ describe('dictation pill projection', () => {
 			phase: 'recording',
 			trigger: 'vad',
 			liveTranscript: '',
+			transcriptCollapsed: false,
 			isSpeaking: true,
 			isTranscribing: false,
 		});
@@ -94,9 +98,39 @@ describe('dictation pill projection', () => {
 			phase: 'recording',
 			trigger: 'vad',
 			liveTranscript: '',
+			transcriptCollapsed: false,
 			isSpeaking: false,
 			isTranscribing: false,
 		});
+	});
+
+	test('the transcript and its fold state ride along on a VAD capture', () => {
+		expect(
+			projectLifecycleToStatus(
+				{ capture: vad('LISTENING'), outcome: { kind: 'none' } },
+				{ text: 'the patient is a 52-year-old male', collapsed: true },
+			),
+		).toEqual({
+			phase: 'recording',
+			trigger: 'vad',
+			liveTranscript: 'the patient is a 52-year-old male',
+			transcriptCollapsed: true,
+			isSpeaking: false,
+			isTranscribing: false,
+		});
+	});
+
+	test('a folded transcript is only ever a VAD capture concern', () => {
+		// Manual recording draws no transcript card, so folding has nothing to say
+		// about it and must not leak into its status: the desktop overlay sizes its
+		// window from this projection, and a stray flag here would resize a window
+		// that has no card in it.
+		expect(
+			projectLifecycleToStatus(
+				{ capture: manual, outcome: { kind: 'none' } },
+				{ text: 'left over from the last session', collapsed: true },
+			),
+		).toEqual({ phase: 'recording', trigger: 'manual' });
 	});
 
 	test('idle capture projects the outcome as the primary pill', () => {

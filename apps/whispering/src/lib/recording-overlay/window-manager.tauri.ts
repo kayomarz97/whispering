@@ -1,8 +1,10 @@
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
 import {
+	availableMonitors,
 	currentMonitor,
-	LogicalPosition,
 	LogicalSize,
+	type Monitor,
+	PhysicalPosition,
 	primaryMonitor,
 } from '@tauri-apps/api/window';
 import { once } from 'wellcrafted/function';
@@ -12,70 +14,119 @@ import {
 	recordingOverlayReady,
 	recordingOverlayStatus,
 } from '$lib/recording-overlay/events';
+import {
+	type MonitorBounds,
+	monitorContains,
+	overlayAnchorFrom,
+	overlayPosition,
+	overlaySize,
+	type Point,
+} from '$lib/recording-overlay/geometry';
 import type { RecordingPillStatus } from '$lib/recording-pill/model';
+import { deviceConfig } from '$lib/state/device-config.svelte';
 
 const log = createLogger('whispering/recording-overlay');
 
-// Fixed size in logical pixels. The width is the pill's max width (the cap in
-// RecordingPill); the transparent window centers the narrower states inside it.
-const OVERLAY_WIDTH = 224;
-const OVERLAY_HEIGHT = 40;
-// A live transcript renders as a card stacked above the pill (see RecordingPill),
-// so the window grows to fit it: the card's own width plus the pill's horizontal
-// breathing room, and its max height plus the pill and the gap between them.
-const OVERLAY_LIVE_WIDTH = 360;
-const OVERLAY_LIVE_HEIGHT = 168;
-// Corner placement (bottom-right, next to the Windows notification area / tray).
-// Margins are in logical pixels. The bottom margin clears the taskbar since
-// `monitor.size` reports the full monitor, not the taskbar-excluded work area.
-const OVERLAY_BOTTOM_MARGIN = 72;
-const OVERLAY_RIGHT_MARGIN = 24;
-
-/**
- * The window size for what the pill is actually rendering right now.
- *
- * This tracks the render condition in `RecordingPill`, not the live-transcription
- * setting: the transcript card only exists while a VAD capture has text to show.
- * Sizing off the setting alone left a manual recording — which never draws a card
- * — floating inside a window four times taller than its pill. The overlay is
- * bottom-anchored, so the pill holds its place on screen and the card grows
- * upward as it appears.
- */
-function overlaySize(status: RecordingPillStatus | null): {
-	width: number;
-	height: number;
-} {
-	const showsTranscript =
-		status?.phase === 'recording' &&
-		status.trigger === 'vad' &&
-		status.liveTranscript.length > 0;
-	return showsTranscript
-		? { width: OVERLAY_LIVE_WIDTH, height: OVERLAY_LIVE_HEIGHT }
-		: { width: OVERLAY_WIDTH, height: OVERLAY_HEIGHT };
-}
+// How far a reported move may sit from the position we just commanded and still
+// count as our own `setPosition` echoing back rather than the user dragging.
+// Logical-to-physical rounding can shift a corner by a pixel; a real drag never
+// ends this close to where the window already was.
+const MOVE_ECHO_TOLERANCE_PX = 2;
 
 let latestStatus: RecordingPillStatus | null = null;
 let queue: Promise<void> = Promise.resolve();
 
+/**
+ * The physical position this module last asked the overlay to take.
+ *
+ * Every `setPosition` makes the window report a move, and that report is
+ * indistinguishable from a drag unless you know what you commanded. Without
+ * this the overlay would "remember" its own default corner the first time it
+ * was shown and never return to that corner again — not after a resolution
+ * change, and not on a different monitor.
+ */
+let lastCommandedPosition: Point | null = null;
+
+/** Whether the overlay is already at `point`, give or take rounding. */
+const isAt = (point: Point): boolean =>
+	lastCommandedPosition !== null &&
+	Math.abs(point.x - lastCommandedPosition.x) <= MOVE_ECHO_TOLERANCE_PX &&
+	Math.abs(point.y - lastCommandedPosition.y) <= MOVE_ECHO_TOLERANCE_PX;
+
+const boundsOf = (monitor: Monitor): MonitorBounds => ({
+	x: monitor.position.x,
+	y: monitor.position.y,
+	width: monitor.size.width,
+	height: monitor.size.height,
+	scaleFactor: monitor.scaleFactor,
+});
+
+/**
+ * The monitor a remembered anchor belongs to.
+ *
+ * Enumerating is worth it because `currentMonitor()` answers for where the
+ * overlay *is*, which at startup is wherever it was created — not necessarily
+ * the monitor the user dragged it to. Clamping a second-monitor anchor against
+ * the primary monitor's bounds would quietly haul the overlay back to screen
+ * one on every launch.
+ */
+async function monitorForAnchor(anchor: Point): Promise<Monitor | null> {
+	const monitors = await availableMonitors().catch(() => [] as Monitor[]);
+	const containing = monitors.find((monitor) =>
+		monitorContains(boundsOf(monitor), anchor),
+	);
+	// The anchor's monitor is gone (unplugged, or resized under it): fall through
+	// to wherever the overlay currently is and let the clamp pull it on-screen.
+	return containing ?? (await currentMonitor()) ?? (await primaryMonitor());
+}
+
 async function computeOverlayPosition(size: {
 	width: number;
 	height: number;
-}): Promise<LogicalPosition | null> {
-	const monitor = (await currentMonitor()) ?? (await primaryMonitor());
+}): Promise<PhysicalPosition | null> {
+	const anchor = deviceConfig.get('overlay.anchor');
+	const monitor = anchor
+		? await monitorForAnchor(anchor)
+		: ((await currentMonitor()) ?? (await primaryMonitor()));
 	if (!monitor) return null;
 
-	const scale = monitor.scaleFactor;
-	const monitorX = monitor.position.x / scale;
-	const monitorY = monitor.position.y / scale;
-	const monitorWidth = monitor.size.width / scale;
-	const monitorHeight = monitor.size.height / scale;
+	const { x, y } = overlayPosition({
+		anchor,
+		monitor: boundsOf(monitor),
+		size,
+	});
+	return new PhysicalPosition(x, y);
+}
 
-	// Bottom-right corner: pin to the right edge (minus margin) instead of centering.
-	// Both edges are derived from the current size, so a window that grows to fit a
-	// transcript keeps the same bottom-right anchor and expands up and to the left.
-	const x = monitorX + monitorWidth - size.width - OVERLAY_RIGHT_MARGIN;
-	const y = monitorY + monitorHeight - size.height - OVERLAY_BOTTOM_MARGIN;
-	return new LogicalPosition(x, y);
+/**
+ * Remember where the user dragged the overlay.
+ *
+ * Called for every move the overlay reports, including the ones this module
+ * caused; the commanded-position check is what separates a drag from an echo.
+ */
+export function recordOverlayMove(move: {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}): void {
+	if (isAt(move)) return;
+	// The drag's landing spot is now the commanded position too, so the same move
+	// reported twice is not processed twice — and so a status arriving mid-drag
+	// does not fight the OS move loop for the window.
+	lastCommandedPosition = { x: move.x, y: move.y };
+	deviceConfig.set('overlay.anchor', overlayAnchorFrom(move));
+}
+
+/**
+ * Forget the remembered spot and send the overlay back to the bottom-right
+ * corner. The escape hatch for an overlay dragged onto a monitor that no longer
+ * exists, or simply somewhere the user regrets.
+ */
+export function resetOverlayPosition(): void {
+	deviceConfig.set('overlay.anchor', null);
+	lastCommandedPosition = null;
+	synchronizeRecordingOverlayWindow(latestStatus);
 }
 
 /** Keep the ready listener live before a newly created overlay can emit. */
@@ -127,18 +178,26 @@ async function applyOverlayStatus(status: RecordingPillStatus | null) {
 	const overlay = await getOverlayWindow();
 	if (!overlay || isSuperseded()) return;
 
-	// Size before position: the anchor is the bottom-right corner, so the
-	// position is derived from the size we are about to apply. Setting both on
-	// every status keeps the window fitted to what the pill draws, so a
-	// transcript appearing (or the mode changing mid-session) resizes it now
-	// rather than at the next launch.
+	// Size before position: the anchor is the window's bottom edge and centre, so
+	// the position is derived from the size we are about to apply. Setting both on
+	// every status keeps the window fitted to what the pill draws, so a transcript
+	// appearing or folding resizes it now rather than at the next launch.
 	const size = overlaySize(status);
 	await overlay.setSize(new LogicalSize(size.width, size.height));
 	if (isSuperseded()) return;
 
 	const position = await computeOverlayPosition(size);
 	if (isSuperseded()) return;
-	if (position) await overlay.setPosition(position);
+	// Only move it if it is not already there. This is not an optimization: while
+	// the user drags, the OS move loop repositions the window on every mouse
+	// move and a live VAD session pushes a status on every speech transition, so
+	// an unconditional `setPosition` would yank the window back mid-drag. Each
+	// reported move updates `lastCommandedPosition`, so a status arriving during
+	// a drag computes the spot the window is already in and leaves it alone.
+	if (position && !isAt(position)) {
+		lastCommandedPosition = { x: position.x, y: position.y };
+		await overlay.setPosition(position);
+	}
 	if (isSuperseded()) return;
 
 	await overlay.show();

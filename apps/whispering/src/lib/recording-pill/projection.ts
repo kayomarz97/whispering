@@ -17,11 +17,14 @@ import type { RecordingPillStatus } from './model.js';
 export function projectLifecycleToStatus(
 	lifecycle: DictationLifecycle,
 	/**
-	 * Running live transcript for this session, read from the store by the
-	 * runtime callers (kept a parameter so this projection stays a pure function
-	 * and never imports reactive state).
+	 * The live transcript's text and whether its card is folded away, read from
+	 * the stores by the runtime callers (kept parameters so this projection stays
+	 * a pure function and never imports reactive state).
 	 */
-	liveTranscriptText = '',
+	transcript: { text: string; collapsed: boolean } = {
+		text: '',
+		collapsed: false,
+	},
 ): RecordingPillStatus | null {
 	const { capture, outcome } = lifecycle;
 
@@ -44,7 +47,11 @@ export function projectLifecycleToStatus(
 				outcome.kind === 'transcribing' || outcome.kind === 'polishing',
 			// The running transcript built up from each pause so far. Empty unless
 			// live transcription is enabled and at least one phrase has landed.
-			liveTranscript: liveTranscriptText,
+			liveTranscript: transcript.text,
+			// Folded away by the minimize control or the idle timer. The pill draws
+			// a chevron chip instead of the card, and the desktop overlay window
+			// shrinks to match.
+			transcriptCollapsed: transcript.collapsed,
 		};
 	}
 

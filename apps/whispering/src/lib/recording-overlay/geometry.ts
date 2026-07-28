@@ -1,0 +1,150 @@
+/**
+ * Where the recording overlay window goes and how big it is.
+ *
+ * Pure arithmetic, deliberately separated from the Tauri window manager that
+ * applies it: the manager is all `await` and platform objects, while this is the
+ * part that can actually be wrong. Sizing that does not match what the pill
+ * draws leaves a transparent window covering — and swallowing clicks over —
+ * screen the user can see through but not touch, which is exactly the failure
+ * this module exists to prevent.
+ */
+import type { RecordingPillStatus } from '$lib/recording-pill/model';
+
+/**
+ * Logical sizes, mirroring what `RecordingPill` renders. The resting width is
+ * the pill's max width (the cap in `RecordingPill`); the transparent window
+ * centers narrower states inside it.
+ */
+export const OVERLAY_WIDTH = 224;
+export const OVERLAY_HEIGHT = 40;
+/**
+ * A live transcript renders as a card stacked above the pill, so the window
+ * grows to fit it: the card's own width plus the pill's horizontal breathing
+ * room, and the card's max height plus the pill and the gap between them.
+ */
+export const OVERLAY_LIVE_WIDTH = 360;
+export const OVERLAY_LIVE_HEIGHT = 168;
+/**
+ * Folded away, the card becomes a chevron chip: the pill's height plus the
+ * chip's 24px and the 8px column gap between them.
+ */
+export const OVERLAY_COLLAPSED_HEIGHT = 72;
+/**
+ * Default corner placement (bottom-right, beside the Windows notification area
+ * / tray), used until the user drags the overlay somewhere else. The bottom
+ * margin clears the taskbar, since a monitor reports its full height rather
+ * than the taskbar-excluded work area.
+ */
+export const OVERLAY_BOTTOM_MARGIN = 72;
+export const OVERLAY_RIGHT_MARGIN = 24;
+
+export type OverlaySize = { width: number; height: number };
+export type Point = { x: number; y: number };
+
+/**
+ * A monitor in physical pixels, plus the scale factor that converts the logical
+ * sizes above into the same units.
+ */
+export type MonitorBounds = {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	scaleFactor: number;
+};
+
+/**
+ * The window size for what the pill is actually rendering right now.
+ *
+ * This tracks the render conditions in `RecordingPill`, not the
+ * live-transcription setting: the transcript card only exists while a VAD
+ * capture has text to show, and it shrinks to a chip when folded. Sizing off
+ * the setting alone left a manual recording — which never draws a card —
+ * floating inside a window four times taller than its pill.
+ */
+export function overlaySize(status: RecordingPillStatus | null): OverlaySize {
+	if (
+		status?.phase === 'recording' &&
+		status.trigger === 'vad' &&
+		status.liveTranscript.length > 0
+	) {
+		return status.transcriptCollapsed
+			? { width: OVERLAY_WIDTH, height: OVERLAY_COLLAPSED_HEIGHT }
+			: { width: OVERLAY_LIVE_WIDTH, height: OVERLAY_LIVE_HEIGHT };
+	}
+	return { width: OVERLAY_WIDTH, height: OVERLAY_HEIGHT };
+}
+
+/**
+ * The point the overlay is remembered by: the bottom edge and horizontal centre
+ * of where it was dropped, in physical pixels.
+ *
+ * Not the top-left corner, because the window resizes underneath the user — a
+ * transcript card appears, folds, and reappears. Anchoring the bottom centre is
+ * what keeps the pill itself sitting still while the card grows above it; a
+ * top-left anchor would slide the pill down the screen every time text arrived.
+ */
+export function overlayAnchorFrom(placement: {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+}): Point {
+	return {
+		x: placement.x + Math.round(placement.width / 2),
+		y: placement.y + placement.height,
+	};
+}
+
+// `max < min` when the window is wider or taller than the monitor: pin to the
+// left/top edge rather than letting the clamp invert and shove it off the far
+// side.
+const clamp = (value: number, min: number, max: number): number =>
+	Math.min(Math.max(value, min), Math.max(min, max));
+
+/**
+ * Where to put a window of `size` on `monitor`, in physical pixels.
+ *
+ * A remembered anchor wins; otherwise the monitor's bottom-right corner. Either
+ * way the result is clamped fully inside the monitor, so an anchor saved on a
+ * display that has since been unplugged, rescaled, or resized cannot strand the
+ * overlay somewhere the user can neither see nor drag it back from.
+ */
+export function overlayPosition(input: {
+	anchor: Point | null;
+	monitor: MonitorBounds;
+	/** The LOGICAL size about to be applied; converted here, once. */
+	size: OverlaySize;
+}): Point {
+	const { anchor, monitor, size } = input;
+	const width = Math.round(size.width * monitor.scaleFactor);
+	const height = Math.round(size.height * monitor.scaleFactor);
+
+	const x = anchor
+		? anchor.x - Math.round(width / 2)
+		: monitor.x +
+			monitor.width -
+			width -
+			Math.round(OVERLAY_RIGHT_MARGIN * monitor.scaleFactor);
+	const y = anchor
+		? anchor.y - height
+		: monitor.y +
+			monitor.height -
+			height -
+			Math.round(OVERLAY_BOTTOM_MARGIN * monitor.scaleFactor);
+
+	return {
+		x: clamp(x, monitor.x, monitor.x + monitor.width - width),
+		y: clamp(y, monitor.y, monitor.y + monitor.height - height),
+	};
+}
+
+/** Whether `point` falls inside `monitor`'s physical bounds. */
+export function monitorContains(monitor: MonitorBounds, point: Point): boolean {
+	return (
+		point.x >= monitor.x &&
+		point.x < monitor.x + monitor.width &&
+		point.y >= monitor.y &&
+		point.y < monitor.y + monitor.height
+	);
+}

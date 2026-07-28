@@ -1,9 +1,11 @@
 <script lang="ts">
 	import type { UnlistenFn } from '@tauri-apps/api/event';
+	import { getCurrentWindow } from '@tauri-apps/api/window';
 	import { onDestroy, onMount } from 'svelte';
 	import {
 		recordingOverlayAction,
 		recordingOverlayMicLevel,
+		recordingOverlayMoved,
 		recordingOverlayReady,
 		recordingOverlayStatus,
 		revealMainWindow,
@@ -48,6 +50,23 @@
 					level = foldMicLevel(level, event.payload);
 				}),
 			);
+			// Report where this window ends up so the main window can remember the
+			// spot the user dragged it to. Every move is forwarded, including the
+			// main window's own `setPosition` echoing back: only that side knows
+			// which position it commanded, so only it can tell an echo from a drag.
+			trackUnlistener(
+				await getCurrentWindow().onMoved((event) => {
+					// The overlay is undecorated with no shadow, so its client area is
+					// its window: the viewport in device pixels is the window's physical
+					// size, measured without a Tauri round trip or a size permission.
+					void recordingOverlayMoved.emit({
+						x: event.payload.x,
+						y: event.payload.y,
+						width: Math.round(window.innerWidth * window.devicePixelRatio),
+						height: Math.round(window.innerHeight * window.devicePixelRatio),
+					});
+				}),
+			);
 			// Tell the main window we are ready so it re-sends the latest status.
 			// Without this handshake the status emitted right after window creation
 			// can land before our listener is attached.
@@ -62,6 +81,19 @@
 
 	function sendAction(action: RecordingPillAction) {
 		void recordingOverlayAction.emit(action);
+	}
+
+	/**
+	 * Hand this window to the OS move loop. The pill decides when a press has
+	 * become a drag; this only performs it, because "which window" is knowledge
+	 * this route has and the platform-free pill must not.
+	 */
+	function startDragging() {
+		void getCurrentWindow()
+			.startDragging()
+			// A window that will not move is a cosmetic loss, not a reason to break
+			// the dictation the overlay is reporting on.
+			.catch((error: unknown) => console.warn('Overlay drag failed', error));
 	}
 </script>
 
@@ -81,6 +113,8 @@
 		onCancel={() => sendAction('cancel')}
 		onShipRaw={() => sendAction('ship-raw')}
 		onReveal={() => void revealMainWindow.emit()}
+		onToggleTranscript={() => sendAction('toggle-transcript')}
+		onDragStart={startDragging}
 	/>
 </div>
 

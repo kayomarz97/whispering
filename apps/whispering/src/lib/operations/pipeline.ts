@@ -13,6 +13,7 @@ import { services } from '$lib/services';
 import type { RecorderStopResult } from '$lib/services/recorder/contract';
 import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
 import { liveTranscript } from '$lib/state/live-transcript.svelte';
+import { overlayTranscript } from '$lib/state/overlay-transcript.svelte';
 import { polishHud } from '$lib/state/polish-hud.svelte';
 import { recordings } from '$lib/state/recordings.svelte';
 import { settings } from '$lib/state/settings.svelte';
@@ -133,6 +134,12 @@ export async function processRecordingPipeline({
 	// purely additive, it never affects the Polish/delivery path below.
 	if (isDictation && settings.get('liveTranscription.enabled')) {
 		liveTranscript.append(transcribedText);
+		// New text is the activity the overlay's idle timer waits for: it brings the
+		// card back if the timer had folded it away, and restarts the countdown from
+		// this phrase. A card the user folded by hand stays folded.
+		overlayTranscript.noteActivity(
+			settings.get('liveTranscription.overlayHideSeconds'),
+		);
 	}
 
 	// Run Polish over the raw transcript, then deliver the polished text. The raw

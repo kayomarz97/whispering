@@ -27,9 +27,10 @@ use tauri::webview::NewWindowResponse;
 use tauri::AppHandle;
 
 // Must stay in sync with `RECORDING_OVERLAY_WINDOW_LABEL` and the pill's sizes in
-// Whispering's `recording-overlay/window-manager.tauri.ts`. The frontend resizes
-// the window to fit what the pill is actually rendering, so these are only the
-// initial (resting pill) dimensions.
+// Whispering's `recording-overlay/geometry.ts`. The frontend resizes the window
+// to fit what the pill is actually rendering — and repositions it to wherever
+// the user last dragged it — so these are only the initial (resting pill)
+// dimensions.
 pub const WINDOW_LABEL: &str = "recording-overlay";
 const OVERLAY_WIDTH: f64 = 224.0;
 const OVERLAY_HEIGHT: f64 = 40.0;

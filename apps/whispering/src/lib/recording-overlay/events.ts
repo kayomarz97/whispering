@@ -26,6 +26,32 @@ export const recordingOverlayAction = defineWindowEvent<RecordingPillAction>(
 	'recording-overlay:action',
 );
 
+/**
+ * overlay -> main: the overlay window sits somewhere new, in PHYSICAL pixels
+ * (the units `tauri://move` reports).
+ *
+ * The overlay forwards every move it observes; deciding which ones were the
+ * user dragging — rather than the main window's own `setPosition` echoing back —
+ * belongs to the main window, because it is the side that knows what position it
+ * last commanded. Physical units are kept on the wire because that is what the
+ * event carries; the main window converts once, against the monitor scale factor
+ * it already reads, so no rounding happens twice.
+ */
+export const recordingOverlayMoved = defineWindowEvent<{
+	x: number;
+	y: number;
+	/**
+	 * The overlay's own physical size at the moment it moved. Sent along because
+	 * the remembered spot is the window's bottom edge and horizontal centre — the
+	 * one anchor that keeps the pill still while a transcript card grows above it
+	 * — and deriving that from a top-left corner needs the size. Measuring it in
+	 * the overlay is exact; the main window would have to reconstruct it from a
+	 * logical size and a monitor scale factor.
+	 */
+	width: number;
+	height: number;
+}>('recording-overlay:moved');
+
 /** overlay -> main: reveal the main Whispering window. */
 export const revealMainWindow = defineWindowSignal('main-window:reveal');
 
