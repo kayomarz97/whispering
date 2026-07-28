@@ -14,19 +14,29 @@
  *   overlay off-screen after a monitor was unplugged or resized.
  */
 import { describe, expect, test } from 'bun:test';
+import type { RecordingOverlayView } from '../src/lib/recording-overlay/events';
 import {
 	type MonitorBounds,
 	monitorContains,
 	OVERLAY_COLLAPSED_HEIGHT,
+	OVERLAY_HANDLE_HEIGHT,
+	OVERLAY_HANDLE_WIDTH,
 	OVERLAY_HEIGHT,
 	OVERLAY_LIVE_HEIGHT,
 	OVERLAY_LIVE_WIDTH,
 	OVERLAY_WIDTH,
 	overlayAnchorFrom,
+	overlayIsVisible,
 	overlayPosition,
 	overlaySize,
 } from '../src/lib/recording-overlay/geometry';
 import type { RecordingPillStatus } from '../src/lib/recording-pill/model';
+
+/** A view with the resting handle on, which is the shipped default. */
+const view = (status: RecordingPillStatus | null): RecordingOverlayView => ({
+	status,
+	idleHandle: true,
+});
 
 const vadRecording = (
 	overrides: Partial<Extract<RecordingPillStatus, { trigger: 'vad' }>> = {},
@@ -58,17 +68,41 @@ const secondary: MonitorBounds = {
 	scaleFactor: 1.25,
 };
 
+describe('overlayIsVisible', () => {
+	test('a dictation always shows the overlay', () => {
+		expect(overlayIsVisible(view({ phase: 'recording', trigger: 'manual' }))).toBe(
+			true,
+		);
+		expect(
+			overlayIsVisible({
+				status: { phase: 'transcribing' },
+				idleHandle: false,
+			}),
+		).toBe(true);
+	});
+
+	test('with nothing live, the handle setting decides', () => {
+		// This is what keeps the app reachable with its window closed to the tray:
+		// the handle is the only surface left, so "no dictation" must not mean
+		// "no window".
+		expect(overlayIsVisible(view(null))).toBe(true);
+		expect(overlayIsVisible({ status: null, idleHandle: false })).toBe(false);
+	});
+});
+
 describe('overlaySize', () => {
-	test('an idle or manual pill gets the resting pill size', () => {
-		expect(overlaySize(null)).toEqual({
-			width: OVERLAY_WIDTH,
-			height: OVERLAY_HEIGHT,
+	test('with nothing live the window is just the resting handle', () => {
+		expect(overlaySize(view(null))).toEqual({
+			width: OVERLAY_HANDLE_WIDTH,
+			height: OVERLAY_HANDLE_HEIGHT,
 		});
-		expect(overlaySize({ phase: 'recording', trigger: 'manual' })).toEqual({
-			width: OVERLAY_WIDTH,
-			height: OVERLAY_HEIGHT,
-		});
-		expect(overlaySize({ phase: 'transcribing' })).toEqual({
+	});
+
+	test('a manual or transcribing pill gets the resting pill size', () => {
+		expect(
+			overlaySize(view({ phase: 'recording', trigger: 'manual' })),
+		).toEqual({ width: OVERLAY_WIDTH, height: OVERLAY_HEIGHT });
+		expect(overlaySize(view({ phase: 'transcribing' }))).toEqual({
 			width: OVERLAY_WIDTH,
 			height: OVERLAY_HEIGHT,
 		});
@@ -77,21 +111,26 @@ describe('overlaySize', () => {
 	test('a VAD capture with no text yet stays at the resting pill size', () => {
 		// Sizing off the live-transcription *setting* was the old bug: it left a
 		// capture with nothing to show floating in a window four times too tall.
-		expect(overlaySize(vadRecording())).toEqual({
+		expect(overlaySize(view(vadRecording()))).toEqual({
 			width: OVERLAY_WIDTH,
 			height: OVERLAY_HEIGHT,
 		});
 	});
 
 	test('a transcript grows the window to fit its card', () => {
-		expect(overlaySize(vadRecording({ liveTranscript: 'hello there' }))).toEqual(
-			{ width: OVERLAY_LIVE_WIDTH, height: OVERLAY_LIVE_HEIGHT },
-		);
+		expect(
+			overlaySize(view(vadRecording({ liveTranscript: 'hello there' }))),
+		).toEqual({ width: OVERLAY_LIVE_WIDTH, height: OVERLAY_LIVE_HEIGHT });
 	});
 
 	test('folding the card shrinks the window, not just the card', () => {
 		const folded = overlaySize(
-			vadRecording({ liveTranscript: 'hello there', transcriptCollapsed: true }),
+			view(
+				vadRecording({
+					liveTranscript: 'hello there',
+					transcriptCollapsed: true,
+				}),
+			),
 		);
 		expect(folded).toEqual({
 			width: OVERLAY_WIDTH,

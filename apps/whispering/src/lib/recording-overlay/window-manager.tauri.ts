@@ -12,46 +12,38 @@ import { createLogger } from 'wellcrafted/logger';
 import {
 	RECORDING_OVERLAY_WINDOW_LABEL,
 	recordingOverlayReady,
+	type RecordingOverlayView,
 	recordingOverlayStatus,
 } from '$lib/recording-overlay/events';
 import {
 	type MonitorBounds,
 	monitorContains,
 	overlayAnchorFrom,
+	overlayIsVisible,
 	overlayPosition,
 	overlaySize,
 	type Point,
 } from '$lib/recording-overlay/geometry';
-import type { RecordingPillStatus } from '$lib/recording-pill/model';
 import { deviceConfig } from '$lib/state/device-config.svelte';
 
 const log = createLogger('whispering/recording-overlay');
 
-// How far a reported move may sit from the position we just commanded and still
-// count as our own `setPosition` echoing back rather than the user dragging.
-// Logical-to-physical rounding can shift a corner by a pixel; a real drag never
-// ends this close to where the window already was.
-const MOVE_ECHO_TOLERANCE_PX = 2;
+// How far a computed position may sit from the one already applied and still
+// count as "already there". Logical-to-physical rounding can shift a corner by a
+// pixel; a real drag never ends this close to where the window already was.
+const POSITION_TOLERANCE_PX = 2;
 
-let latestStatus: RecordingPillStatus | null = null;
+let latestView: RecordingOverlayView = { status: null, idleHandle: false };
 let queue: Promise<void> = Promise.resolve();
 
-/**
- * The physical position this module last asked the overlay to take.
- *
- * Every `setPosition` makes the window report a move, and that report is
- * indistinguishable from a drag unless you know what you commanded. Without
- * this the overlay would "remember" its own default corner the first time it
- * was shown and never return to that corner again — not after a resolution
- * change, and not on a different monitor.
- */
+/** The physical position this module last asked the overlay to take. */
 let lastCommandedPosition: Point | null = null;
 
 /** Whether the overlay is already at `point`, give or take rounding. */
 const isAt = (point: Point): boolean =>
 	lastCommandedPosition !== null &&
-	Math.abs(point.x - lastCommandedPosition.x) <= MOVE_ECHO_TOLERANCE_PX &&
-	Math.abs(point.y - lastCommandedPosition.y) <= MOVE_ECHO_TOLERANCE_PX;
+	Math.abs(point.x - lastCommandedPosition.x) <= POSITION_TOLERANCE_PX &&
+	Math.abs(point.y - lastCommandedPosition.y) <= POSITION_TOLERANCE_PX;
 
 const boundsOf = (monitor: Monitor): MonitorBounds => ({
 	x: monitor.position.x,
@@ -101,8 +93,10 @@ async function computeOverlayPosition(size: {
 /**
  * Remember where the user dragged the overlay.
  *
- * Called for every move the overlay reports, including the ones this module
- * caused; the commanded-position check is what separates a drag from an echo.
+ * Only drags reach here — the overlay filters its own move reports, because it
+ * is the side that knows which moves it started. Recording the landing spot as
+ * the commanded position also stops the next status update from fighting the OS
+ * move loop for the window while the drag is still in progress.
  */
 export function recordOverlayMove(move: {
 	x: number;
@@ -110,10 +104,6 @@ export function recordOverlayMove(move: {
 	width: number;
 	height: number;
 }): void {
-	if (isAt(move)) return;
-	// The drag's landing spot is now the commanded position too, so the same move
-	// reported twice is not processed twice — and so a status arriving mid-drag
-	// does not fight the OS move loop for the window.
 	lastCommandedPosition = { x: move.x, y: move.y };
 	deviceConfig.set('overlay.anchor', overlayAnchorFrom(move));
 }
@@ -126,7 +116,7 @@ export function recordOverlayMove(move: {
 export function resetOverlayPosition(): void {
 	deviceConfig.set('overlay.anchor', null);
 	lastCommandedPosition = null;
-	synchronizeRecordingOverlayWindow(latestStatus);
+	synchronizeRecordingOverlayWindow(latestView);
 }
 
 /** Keep the ready listener live before a newly created overlay can emit. */
@@ -134,7 +124,7 @@ const ensureReadyListener = once(
 	(): Promise<void> =>
 		recordingOverlayReady
 			.listen(() => {
-				if (latestStatus) void recordingOverlayStatus.emit(latestStatus);
+				void recordingOverlayStatus.emit(latestView);
 			})
 			.then(() => undefined),
 );
@@ -163,37 +153,41 @@ async function getOverlayWindow(): Promise<WebviewWindow | null> {
 	return overlay;
 }
 
-async function applyOverlayStatus(status: RecordingPillStatus | null) {
-	const isSuperseded = () => status !== latestStatus;
+async function applyOverlayView(view: RecordingOverlayView) {
+	const isSuperseded = () => view !== latestView;
 	if (isSuperseded()) return;
-
-	if (!status) {
-		const overlay = await WebviewWindow.getByLabel(
-			RECORDING_OVERLAY_WINDOW_LABEL,
-		);
-		if (overlay) await overlay.hide();
-		return;
-	}
 
 	const overlay = await getOverlayWindow();
 	if (!overlay || isSuperseded()) return;
 
+	// Tell the overlay what to draw before resizing around it. The window is
+	// transparent, so a window sized for the pill while the handle is still
+	// painted shows nothing wrong — whereas the reverse leaves a pill clipped by
+	// a handle-sized window for a frame.
+	await recordingOverlayStatus.emit(view);
+	if (isSuperseded()) return;
+
+	if (!overlayIsVisible(view)) {
+		await overlay.hide();
+		return;
+	}
+
 	// Size before position: the anchor is the window's bottom edge and centre, so
 	// the position is derived from the size we are about to apply. Setting both on
-	// every status keeps the window fitted to what the pill draws, so a transcript
+	// every view keeps the window fitted to what the pill draws, so a transcript
 	// appearing or folding resizes it now rather than at the next launch.
-	const size = overlaySize(status);
+	const size = overlaySize(view);
 	await overlay.setSize(new LogicalSize(size.width, size.height));
 	if (isSuperseded()) return;
 
 	const position = await computeOverlayPosition(size);
 	if (isSuperseded()) return;
 	// Only move it if it is not already there. This is not an optimization: while
-	// the user drags, the OS move loop repositions the window on every mouse
-	// move and a live VAD session pushes a status on every speech transition, so
-	// an unconditional `setPosition` would yank the window back mid-drag. Each
-	// reported move updates `lastCommandedPosition`, so a status arriving during
-	// a drag computes the spot the window is already in and leaves it alone.
+	// the user drags, the OS move loop repositions the window on every mouse move
+	// and a live VAD session pushes a view on every speech transition, so an
+	// unconditional `setPosition` would yank the window back mid-drag. Each drag
+	// report updates `lastCommandedPosition`, so a view arriving during a drag
+	// computes the spot the window is already in and leaves it alone.
 	if (position && !isAt(position)) {
 		lastCommandedPosition = { x: position.x, y: position.y };
 		await overlay.setPosition(position);
@@ -201,21 +195,15 @@ async function applyOverlayStatus(status: RecordingPillStatus | null) {
 	if (isSuperseded()) return;
 
 	await overlay.show();
-	if (isSuperseded()) {
-		if (!latestStatus) await overlay.hide();
-		return;
-	}
-
-	await recordingOverlayStatus.emit(status);
 }
 
 /** Synchronize the native overlay without letting cosmetic failures stop capture. */
 export function synchronizeRecordingOverlayWindow(
-	status: RecordingPillStatus | null,
+	view: RecordingOverlayView,
 ): void {
-	latestStatus = status;
+	latestView = view;
 	queue = queue
-		.then(() => applyOverlayStatus(status))
+		.then(() => applyOverlayView(view))
 		.catch((error) => {
 			log.warn(error instanceof Error ? error : new Error(String(error)));
 		});

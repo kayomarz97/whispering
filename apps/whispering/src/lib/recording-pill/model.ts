@@ -48,8 +48,13 @@ export type RecordingPillStatus =
  * lives in its own webview while the window that must resize around it is owned
  * by the main window: the main window holds the fold state, so the card and the
  * window it sits in can never disagree.
+ *
+ * `start` comes from the resting handle: the overlay stays on screen as a small
+ * line between dictations, and clicking it begins one. It is the only action
+ * that arrives while nothing is live.
  */
 export type RecordingPillAction =
+	| 'start'
 	| 'stop'
 	| 'cancel'
 	| 'ship-raw'

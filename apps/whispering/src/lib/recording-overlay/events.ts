@@ -16,8 +16,25 @@ import type {
 /** Stable Tauri label for the secondary recording pill webview. */
 export const RECORDING_OVERLAY_WINDOW_LABEL = 'recording-overlay';
 
-/** main -> overlay: what the shared recording pill should display. */
-export const recordingOverlayStatus = defineWindowEvent<RecordingPillStatus>(
+/**
+ * Everything the overlay window needs to draw itself.
+ *
+ * `status` is `null` between dictations. That used to mean "hide the window",
+ * and now means "draw the resting handle" when `idleHandle` is on: the overlay
+ * stays on screen as a small line the user can click (or drag) instead of
+ * vanishing, so starting a dictation never requires finding the app first. The
+ * two travel together in one message because the window is sized from both, and
+ * a size derived from two events that can arrive out of order is a window that
+ * flickers at the wrong size.
+ */
+export type RecordingOverlayView = {
+	status: RecordingPillStatus | null;
+	/** Rest as a small handle rather than disappearing between dictations. */
+	idleHandle: boolean;
+};
+
+/** main -> overlay: what the overlay window should display. */
+export const recordingOverlayStatus = defineWindowEvent<RecordingOverlayView>(
 	'recording-overlay:status',
 );
 
@@ -27,15 +44,14 @@ export const recordingOverlayAction = defineWindowEvent<RecordingPillAction>(
 );
 
 /**
- * overlay -> main: the overlay window sits somewhere new, in PHYSICAL pixels
- * (the units `tauri://move` reports).
+ * overlay -> main: the user dragged the overlay somewhere new, in PHYSICAL
+ * pixels (the units `tauri://move` reports).
  *
- * The overlay forwards every move it observes; deciding which ones were the
- * user dragging — rather than the main window's own `setPosition` echoing back —
- * belongs to the main window, because it is the side that knows what position it
- * last commanded. Physical units are kept on the wire because that is what the
- * event carries; the main window converts once, against the monitor scale factor
- * it already reads, so no rounding happens twice.
+ * Only sent for moves the overlay itself started, never for the main window's
+ * own `setPosition` echoing back. The overlay is the only side that knows which
+ * is which — it is the side that called `startDragging` — so filtering here is
+ * exact, where the main window could only guess by comparing coordinates, and
+ * would guess wrong whenever a resize and a reposition interleaved.
  */
 export const recordingOverlayMoved = defineWindowEvent<{
 	x: number;

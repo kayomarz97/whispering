@@ -2,6 +2,8 @@ import {
 	cancelRecording,
 	stopManualRecording,
 	stopVadRecording,
+	toggleManualRecording,
+	toggleVadRecording,
 } from '$lib/operations/recording';
 import type { RecordingPillAction } from '$lib/recording-pill/model';
 import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
@@ -36,6 +38,18 @@ export function dispatchPillAction(action: RecordingPillAction): void {
 		overlayTranscript.toggle(
 			settings.get('liveTranscription.overlayHideSeconds'),
 		);
+		return;
+	}
+	// The resting handle: the one action that arrives with nothing live. It
+	// starts whichever capture the user has chosen rather than always voice
+	// capture, so clicking the line does what their own shortcut does. `import`
+	// is a surface, not a capture, and has nothing for the handle to start.
+	if (action === 'start') {
+		if (settings.get('recording.trigger') === 'manual') {
+			void toggleManualRecording();
+		} else {
+			void toggleVadRecording();
+		}
 		return;
 	}
 	const { capture } = dictationLifecycle.current;

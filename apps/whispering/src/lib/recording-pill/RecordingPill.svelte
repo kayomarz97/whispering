@@ -30,8 +30,10 @@
 		onReveal,
 		onToggleTranscript,
 		onDragStart,
+		onStartCapture,
+		idleHandle = false,
 	}: {
-		/** What to display, or `null` when the dictation is idle (hidden). */
+		/** What to display, or `null` when no dictation is in flight. */
 		status: RecordingPillStatus | null;
 		/** Live, smoothed mic loudness, 0 (silent) to 1 (loud). */
 		level: number;
@@ -52,6 +54,16 @@
 		 * page and there is no window to move.
 		 */
 		onDragStart?: () => void;
+		/** Begin a dictation from the resting handle. */
+		onStartCapture?: () => void;
+		/**
+		 * Rest as a small handle instead of rendering nothing when `status` is
+		 * `null`. Desktop only: the handle exists so the overlay stays on screen
+		 * (and clickable) between dictations, which has no meaning for the web
+		 * mount, where the pill is an element inside a page the user is already
+		 * looking at.
+		 */
+		idleHandle?: boolean;
 	} = $props();
 
 	// Dragging the overlay and clicking it to reveal Whispering share one pointer,
@@ -179,7 +191,34 @@
      so stop, cancel, and ship-raw never reveal it as a side effect. -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-{#if status}
+{#if !status && idleHandle}
+	<!-- Resting: a small line, always on screen, which is the whole point. The
+	     main window closes to the tray and the app has no other visible surface,
+	     so this is what a dictation starts from when the user has not memorised a
+	     shortcut — click it and it becomes the pill. It is a dark bar with a light
+	     ring rather than a plain white line because it has to stay legible over
+	     whatever happens to be behind it. -->
+	<button
+		type="button"
+		class="group flex h-5 w-full cursor-pointer items-end justify-center bg-transparent pb-[3px] select-none"
+		aria-label="Start dictation"
+		title="Click to start dictation · drag to move"
+		onpointerdown={onDragSurfacePointerDown}
+		onpointermove={onDragSurfacePointerMove}
+		onpointerup={onDragSurfacePointerUp}
+		onclick={() => {
+			if (didDrag) {
+				didDrag = false;
+				return;
+			}
+			onStartCapture?.();
+		}}
+	>
+		<span
+			class="h-[6px] w-14 rounded-full bg-[#0f0f11]/85 ring-1 ring-white/30 transition-all duration-150 ease-out group-hover:w-20 group-hover:bg-[#0f0f11]/95 group-hover:ring-white/60"
+		></span>
+	</button>
+{:else if status}
 	<!-- Column wrapper: the live transcript (when present) stacks above the pill.
 	     With no transcript this collapses to just the pill, unchanged. -->
 	<div class="flex flex-col items-center gap-2">

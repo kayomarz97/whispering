@@ -8,7 +8,7 @@
  * screen the user can see through but not touch, which is exactly the failure
  * this module exists to prevent.
  */
-import type { RecordingPillStatus } from '$lib/recording-pill/model';
+import type { RecordingOverlayView } from '$lib/recording-overlay/events';
 
 /**
  * Logical sizes, mirroring what `RecordingPill` renders. The resting width is
@@ -29,6 +29,15 @@ export const OVERLAY_LIVE_HEIGHT = 168;
  * chip's 24px and the 8px column gap between them.
  */
 export const OVERLAY_COLLAPSED_HEIGHT = 72;
+/**
+ * Resting between dictations: a small handle the user can click to start, and
+ * grab to move. Wide enough to hit without aiming and short enough to read as a
+ * line rather than a window — this sits on screen all the time, so anything
+ * bigger would be clutter, and anything thinner would be a click target nobody
+ * can hit.
+ */
+export const OVERLAY_HANDLE_WIDTH = 96;
+export const OVERLAY_HANDLE_HEIGHT = 20;
 /**
  * Default corner placement (bottom-right, beside the Windows notification area
  * / tray), used until the user drags the overlay somewhere else. The bottom
@@ -62,9 +71,20 @@ export type MonitorBounds = {
  * the setting alone left a manual recording — which never draws a card —
  * floating inside a window four times taller than its pill.
  */
-export function overlaySize(status: RecordingPillStatus | null): OverlaySize {
+export function overlaySize(view: RecordingOverlayView): OverlaySize {
+	const { status } = view;
+	// Between dictations the window shrinks to the resting handle. Its size is
+	// still computed (rather than skipped) when the handle is off, because the
+	// window is sized before it is hidden and a stale size would flash at the
+	// next show.
+	if (!status) {
+		return {
+			width: OVERLAY_HANDLE_WIDTH,
+			height: OVERLAY_HANDLE_HEIGHT,
+		};
+	}
 	if (
-		status?.phase === 'recording' &&
+		status.phase === 'recording' &&
 		status.trigger === 'vad' &&
 		status.liveTranscript.length > 0
 	) {
@@ -73,6 +93,19 @@ export function overlaySize(status: RecordingPillStatus | null): OverlaySize {
 			: { width: OVERLAY_LIVE_WIDTH, height: OVERLAY_LIVE_HEIGHT };
 	}
 	return { width: OVERLAY_WIDTH, height: OVERLAY_HEIGHT };
+}
+
+/**
+ * Whether the overlay window should be on screen at all.
+ *
+ * A dictation always shows it. With no dictation it stays up only as the
+ * resting handle, which is what makes "press the shortcut, or click the line"
+ * possible without the app window: the overlay outlives the main window being
+ * closed to the tray, so the handle is the app's whole surface until the next
+ * dictation.
+ */
+export function overlayIsVisible(view: RecordingOverlayView): boolean {
+	return view.status !== null || view.idleHandle;
 }
 
 /**

@@ -10,19 +10,21 @@
 		recordingOverlayStatus,
 		revealMainWindow,
 	} from '$lib/recording-overlay/events';
+	import type { RecordingOverlayView } from '$lib/recording-overlay/events';
 	import { foldMicLevel } from '$lib/recording-pill/level';
-	import type {
-		RecordingPillAction,
-		RecordingPillStatus,
-	} from '$lib/recording-pill/model';
+	import type { RecordingPillAction } from '$lib/recording-pill/model';
 	import RecordingPill from '$lib/recording-pill/RecordingPill.svelte';
 
 	// Tauri adapter for the recording pill. The overlay lives in its own webview,
 	// so it cannot read the recorder state modules directly: the main window
-	// pushes the current status over a Tauri event and we render from that, and
+	// pushes the current view over a Tauri event and we render from that, and
 	// control gestures go back over Tauri events. The pill itself
 	// (`RecordingPill`) is platform-free; this route owns the IPC glue.
-	let status = $state<RecordingPillStatus | null>(null);
+	//
+	// The window is created hidden, so `idleHandle: true` here only decides what
+	// is drawn if the window is somehow shown before the first view lands — the
+	// main window is the authority and sends its own value immediately.
+	let view = $state<RecordingOverlayView>({ status: null, idleHandle: true });
 
 	// Live, smoothed mic loudness, 0 (silent) to 1 (loud). Driven by the
 	// `mic-level` event: VAD frames in JS for voice-activated capture, the Rust
@@ -42,7 +44,7 @@
 		void (async () => {
 			trackUnlistener(
 				await recordingOverlayStatus.listen((event) => {
-					status = event.payload;
+					view = event.payload;
 				}),
 			);
 			trackUnlistener(
@@ -50,12 +52,20 @@
 					level = foldMicLevel(level, event.payload);
 				}),
 			);
-			// Report where this window ends up so the main window can remember the
-			// spot the user dragged it to. Every move is forwarded, including the
-			// main window's own `setPosition` echoing back: only that side knows
-			// which position it commanded, so only it can tell an echo from a drag.
+			// Report where the user drags this window, so the main window can
+			// remember the spot. Only drags: the main window repositions the overlay
+			// on every status (a live VAD session pushes one per speech transition,
+			// each resize moves it to keep the pill still), and each of those moves
+			// is reported here exactly like a drag. Reporting them all and having
+			// the main window discard its own echoes by comparing coordinates was
+			// tried first and is not sound — a resize and a reposition can interleave
+			// so that an echo no longer matches the last commanded position, and the
+			// remembered spot drifts back toward the corner. This side knows the
+			// answer for free: it is the side that called `startDragging`.
 			trackUnlistener(
 				await getCurrentWindow().onMoved((event) => {
+					if (!isDraggingWindow) return;
+					keepDragAliveUntilMovesStop();
 					// The overlay is undecorated with no shadow, so its client area is
 					// its window: the viewport in device pixels is the window's physical
 					// size, measured without a Tauri round trip or a size permission.
@@ -83,17 +93,43 @@
 		void recordingOverlayAction.emit(action);
 	}
 
+	// A drag is bounded by its move reports, not by a pointer release: once
+	// `startDragging` hands the pointer to the Windows move loop, this document
+	// stops receiving pointer events entirely, so there is no `pointerup` to end
+	// on. The moves themselves are the signal — they stream while the user drags
+	// and stop when they let go — so the drag is held open for a beat past the
+	// last one and closed when none follows.
+	const DRAG_SETTLE_MS = 600;
+	let isDraggingWindow = false;
+	let dragSettleTimer: ReturnType<typeof setTimeout> | undefined;
+
+	function keepDragAliveUntilMovesStop() {
+		clearTimeout(dragSettleTimer);
+		dragSettleTimer = setTimeout(() => {
+			dragSettleTimer = undefined;
+			isDraggingWindow = false;
+		}, DRAG_SETTLE_MS);
+	}
+
 	/**
 	 * Hand this window to the OS move loop. The pill decides when a press has
 	 * become a drag; this only performs it, because "which window" is knowledge
 	 * this route has and the platform-free pill must not.
 	 */
 	function startDragging() {
+		isDraggingWindow = true;
+		// If the drag never produces a move (the gesture was refused, or the user
+		// let go without travelling), this closes it rather than leaving the flag
+		// set for the next repositioning to misread.
+		keepDragAliveUntilMovesStop();
 		void getCurrentWindow()
 			.startDragging()
 			// A window that will not move is a cosmetic loss, not a reason to break
 			// the dictation the overlay is reporting on.
-			.catch((error: unknown) => console.warn('Overlay drag failed', error));
+			.catch((error: unknown) => {
+				isDraggingWindow = false;
+				console.warn('Overlay drag failed', error);
+			});
 	}
 </script>
 
@@ -107,11 +143,13 @@
      instead of jumping half the card's height every time text arrives. -->
 <div class="fixed inset-0 flex items-end justify-center">
 	<RecordingPill
-		{status}
+		status={view.status}
+		idleHandle={view.idleHandle}
 		{level}
 		onStop={() => sendAction('stop')}
 		onCancel={() => sendAction('cancel')}
 		onShipRaw={() => sendAction('ship-raw')}
+		onStartCapture={() => sendAction('start')}
 		onReveal={() => void revealMainWindow.emit()}
 		onToggleTranscript={() => sendAction('toggle-transcript')}
 		onDragStart={startDragging}

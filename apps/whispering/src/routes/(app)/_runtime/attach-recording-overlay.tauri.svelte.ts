@@ -13,6 +13,7 @@ import { projectLifecycleToStatus } from '$lib/recording-pill/projection';
 import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
 import { liveTranscript } from '$lib/state/live-transcript.svelte';
 import { overlayTranscript } from '$lib/state/overlay-transcript.svelte';
+import { settings } from '$lib/state/settings.svelte';
 import { tauriOnly } from '$lib/tauri.tauri';
 import type { RuntimeOwner } from './types';
 
@@ -25,15 +26,16 @@ function attachRecordingOverlay() {
 		else unlisteners.push(unlisten);
 	};
 
-	const overlayStatus = $derived(
-		projectLifecycleToStatus(dictationLifecycle.current, {
+	const overlayView = $derived({
+		status: projectLifecycleToStatus(dictationLifecycle.current, {
 			text: liveTranscript.text,
 			collapsed: overlayTranscript.collapsed,
 		}),
-	);
+		idleHandle: settings.get('overlay.idleHandle'),
+	});
 
 	$effect(() => {
-		synchronizeRecordingOverlayWindow(overlayStatus);
+		synchronizeRecordingOverlayWindow(overlayView);
 	});
 
 	void recordingOverlayAction

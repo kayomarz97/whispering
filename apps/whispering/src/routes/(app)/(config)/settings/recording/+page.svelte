@@ -184,6 +184,12 @@
 		{/if}
 
 		{#if tauri}
+			<SettingSwitch
+				key="overlay.idleHandle"
+				label="Keep a small handle on screen"
+				description="Between dictations the overlay rests as a small line in the corner instead of disappearing. Click it to start dictating, or drag it to move it — it stays put even when you close Whispering to the tray, so you never have to find the app first. Turn this off if you would rather see nothing until you press your shortcut."
+			/>
+
 			<Field.Field>
 				<Field.Label>Recording overlay position</Field.Label>
 				<Button
@@ -194,10 +200,10 @@
 					Move overlay back to the corner
 				</Button>
 				<Field.Description>
-					Drag the overlay by its pill (or by the transcript above it) to put it
-					anywhere on screen; it stays there, on this computer, until you move it
-					again. This puts it back in the bottom-right corner — useful if you
-					moved it onto a screen you no longer have.
+					Drag the overlay by its handle, its pill, or the transcript above it to
+					put it anywhere on screen; it stays there, on this computer, until you
+					move it again. This puts it back in the bottom-right corner — useful if
+					you moved it onto a screen you no longer have.
 				</Field.Description>
 			</Field.Field>
 		{/if}

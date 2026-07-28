@@ -189,6 +189,24 @@ const recording = {
 } as const;
 
 /**
+ * The desktop recording overlay's resting state.
+ *
+ * With the handle on, the overlay never leaves the screen: between dictations it
+ * shrinks to a small line the user can click to start one, and drag to move.
+ * That line is the app's only visible surface once the main window is closed to
+ * the tray, which is the point — starting a dictation should not require finding
+ * the app first, and a global shortcut is no help to someone who has not learned
+ * it yet. Off restores the older behaviour, where the overlay appears only while
+ * something is happening; a permanent mark on the screen is not to everyone's
+ * taste, and the shortcut still works without it.
+ *
+ * No effect on the web build, which has no overlay window.
+ */
+const overlay = {
+	'overlay.idleHandle': defineKv(field.boolean(), () => true),
+} as const;
+
+/**
  * Live (pause-triggered) transcription. When enabled with voice-activity
  * capture, each phrase you speak is transcribed the moment you pause and shown
  * in the recording overlay, so text appears as you talk instead of only after
@@ -422,6 +440,7 @@ export function defineWhispering(
 			...output,
 			...dataRetention,
 			...recording,
+			...overlay,
 			...liveTranscription,
 			...defineTranscriptionSettings(defaultTranscriptionService),
 			...completion,
