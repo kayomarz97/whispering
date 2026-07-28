@@ -435,3 +435,50 @@ verifying empirically (install v1, write a setting, run an update, confirm the s
 before relying on it, and re-run docs-researcher if the fork moves away from NSIS/MSI defaults.
 
 Source: https://v2.tauri.app/plugin/updater/ (read 2026-07-25, fetched verbatim in full).
+
+### Tauri v2 — moving a window from its own webview (verified 2026-07-28)
+
+Verified against Tauri 2.11.5 / WebView2 on Windows 11 by building it and driving the
+installed app, not read from docs.
+
+**Permission.** `getCurrentWindow().startDragging()` needs exactly
+`core:window:allow-start-dragging` in that window's capability. It does not need
+`core:window:default`, `allow-set-position`, or `allow-outer-size`, so a display-only
+overlay can be allowed to move itself and nothing else.
+
+**It swallows the pointer.** `startDragging` calls the Windows modal move loop
+(`ReleaseCapture` + `WM_NCLBUTTONDOWN`/`HTCAPTION`). From that moment the webview document
+receives no further pointer events for the gesture — no `pointermove`, no `pointerup`, no
+`click`. Two consequences:
+
+- Calling it on `pointerdown` silently deletes any click gesture on the same element. To
+  keep both, watch the press and only call `startDragging` once it has travelled a few
+  pixels; treat anything shorter as a click.
+- A drag cannot be ended by a pointer event. Bound it by the `tauri://move` reports
+  instead: they stream while the user drags and stop when they let go, so hold the drag
+  open for a few hundred ms past the last one.
+
+**A non-focusable window still drags.** `.focusable(false)` (`WS_EX_NOACTIVATE`) does not
+block it.
+
+**`tauri://move` fires for programmatic moves too.** `Window.onMoved` cannot distinguish
+the user dragging from another window's `setPosition`. Do not try to tell them apart by
+comparing coordinates against the last position you commanded: if the window is also being
+resized and repositioned on a timer or an event stream, a report can arrive after a newer
+position was commanded, fail the comparison, and be misread as a drag. Filter on the side
+that called `startDragging` — that side knows for certain.
+
+**Listening to `tauri://move` needs only `core:event:allow-listen`.** `Window.onMoved`
+routes through the ordinary event listener with a window target; there is no separate
+permission for it. Its payload is a physical position.
+
+**`core:window:default` already grants the monitor getters** — `allow-current-monitor`,
+`allow-primary-monitor`, `allow-available-monitors`, `allow-scale-factor` — so a surface
+holding `core:default` can enumerate monitors with no extra grant.
+
+### Chromium fake media flags — the looping gotcha (verified 2026-07-28)
+
+`--use-file-for-fake-audio-capture=<wav>` **loops the file forever**. A speech clip
+therefore never goes silent, so anything that waits on silence (a VAD idle timeout, an
+end-of-speech timer) will never fire under it. Generate a silent WAV — 44-byte header plus
+zeroed PCM — and point the flag at that to test those paths.
