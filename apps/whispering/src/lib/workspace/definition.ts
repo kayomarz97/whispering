@@ -167,6 +167,25 @@ const recording = {
 	// roaming preference, not a per-device capability, so it follows you across
 	// machines like the sound toggles.
 	'recording.pausePlayback': defineKv(field.boolean(), () => false),
+	/**
+	 * Disarm a voice-activated session after this many seconds with no speech.
+	 * `0` never disarms, which is how voice capture behaved before this existed.
+	 *
+	 * Armed listening is invisible once the overlay is out of the corner of your
+	 * eye, and it is not free: it holds the microphone, and anything it decides is
+	 * speech gets transcribed and billed. A session the user has walked away from
+	 * should end itself rather than sit open until something in the room — a call,
+	 * a film, a conversation — feeds it. The timer counts silence only, so it can
+	 * never cut off someone who is actually dictating; every phrase restarts it.
+	 *
+	 * Ten seconds by default: long enough to survive pausing to think mid-note,
+	 * short enough that a forgotten session closes on its own. Roaming, like the
+	 * other capture preferences.
+	 */
+	'recording.vadSilenceTimeoutSeconds': defineKv(
+		field.number({ minimum: 0, maximum: 300 }),
+		() => 10,
+	),
 } as const;
 
 /**
@@ -189,6 +208,20 @@ const liveTranscription = {
 	'liveTranscription.minSpeechSeconds': defineKv(
 		field.number({ minimum: 0.1, maximum: 2 }),
 		() => 0.3,
+	),
+	/**
+	 * Fold the overlay's transcript card away after this many seconds with no new
+	 * phrase. `0` leaves it up until the session ends or the user folds it by hand.
+	 *
+	 * The card is the one part of the overlay big enough to sit over what you are
+	 * reading, and on desktop it is a real window: while it is up it both covers
+	 * that area and swallows clicks in it. Text you have already read has no claim
+	 * on the screen, so the default is to let it go a few seconds after it stops
+	 * changing; the next phrase brings it straight back.
+	 */
+	'liveTranscription.overlayHideSeconds': defineKv(
+		field.number({ minimum: 0, maximum: 60 }),
+		() => 3,
 	),
 } as const;
 

@@ -157,6 +157,29 @@ const DEVICE_DEFINITIONS = {
 		'after_5_minutes',
 	),
 
+	// ── Recording overlay placement ───────────────────────────────────
+	/**
+	 * Where the user dragged the recording overlay, in PHYSICAL desktop pixels:
+	 * the window's bottom edge and horizontal centre, not its top-left corner.
+	 * The overlay resizes as a live transcript appears and folds away, and the
+	 * bottom-centre is the only anchor that leaves the pill itself sitting still
+	 * while the card grows above it.
+	 *
+	 * Physical rather than logical because a multi-monitor desktop has no single
+	 * logical coordinate space — each monitor carries its own scale factor, so
+	 * the same logical pair means different places depending on which monitor you
+	 * divide by. Physical pixels are the one frame every monitor shares.
+	 *
+	 * Device-bound, and emphatically so: monitor count, resolution, and layout
+	 * are facts about this machine, and a spot that is perfect on a 32" desktop
+	 * display is off-screen on a laptop. `null` means "never moved", which is the
+	 * bottom-right default the overlay ships with.
+	 */
+	'overlay.anchor': defineEntry(
+		type({ x: 'number', y: 'number' }).or('null'),
+		null as { x: number; y: number } | null,
+	),
+
 	// ── Global OS shortcuts (device-specific, never synced) ───────────
 	// Structured KeyBinding (physical-key space) resolved to a plugin accelerator.
 	// Old accelerator-string values are not migrated: they fail this schema and
