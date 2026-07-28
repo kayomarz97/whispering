@@ -46,6 +46,25 @@
 		{ value: 0.5, label: '0.5 seconds' },
 		{ value: 0.8, label: '0.8 seconds' },
 	];
+
+	// How long a voice activated session may sit in silence before it disarms
+	// itself, and how long the overlay's transcript card stays up after the last
+	// phrase. Both are "0 = never" (schema ranges: 0-300 and 0-60).
+	const VAD_SILENCE_TIMEOUT_OPTIONS = [
+		{ value: 5, label: '5 seconds' },
+		{ value: 10, label: '10 seconds (recommended)' },
+		{ value: 20, label: '20 seconds' },
+		{ value: 30, label: '30 seconds' },
+		{ value: 60, label: '1 minute' },
+		{ value: 0, label: "Never — keep listening until I stop it" },
+	];
+	const OVERLAY_HIDE_OPTIONS = [
+		{ value: 2, label: '2 seconds' },
+		{ value: 3, label: '3 seconds (recommended)' },
+		{ value: 5, label: '5 seconds' },
+		{ value: 10, label: '10 seconds' },
+		{ value: 0, label: 'Never — leave it up until I hide it' },
+	];
 </script>
 
 <svelte:head> <title>Recording Settings - Whispering</title> </svelte:head>
@@ -134,6 +153,14 @@
 					(selected) =>
 						deviceConfig.set('recording.navigator.deviceId', selected)}
 			/>
+
+			<SettingSelect
+				store={settings}
+				key="recording.vadSilenceTimeoutSeconds"
+				label="Stop listening after silence"
+				items={VAD_SILENCE_TIMEOUT_OPTIONS}
+				description="Voice Activated listening switches itself off after this much silence, so a session you forgot about does not sit open holding the microphone (and does not start transcribing a film, a call, or the room). Only silence counts: every phrase you speak restarts the clock, so it cannot cut you off mid-dictation. Press your voice capture shortcut to start listening again."
+			/>
 		{/if}
 
 		{#if settings.get('recording.trigger') === 'manual'}
@@ -154,6 +181,25 @@
 					description="Higher sample rates provide better quality but create larger files"
 				/>
 			{/if}
+		{/if}
+
+		{#if tauri}
+			<Field.Field>
+				<Field.Label>Recording overlay position</Field.Label>
+				<Button
+					variant="outline"
+					class="w-fit"
+					onclick={() => tauri?.recordingOverlay.resetPosition()}
+				>
+					Move overlay back to the corner
+				</Button>
+				<Field.Description>
+					Drag the overlay by its pill (or by the transcript above it) to put it
+					anywhere on screen; it stays there, on this computer, until you move it
+					again. This puts it back in the bottom-right corner — useful if you
+					moved it onto a screen you no longer have.
+				</Field.Description>
+			</Field.Field>
 		{/if}
 
 		<Field.Field>
@@ -251,6 +297,13 @@
 				label="Shortest phrase"
 				items={MIN_SPEECH_OPTIONS}
 				description="Phrases shorter than this are ignored, so silences and short blips do not each trigger a transcription (which your provider may bill at a minimum length)."
+			/>
+			<SettingSelect
+				store={settings}
+				key="liveTranscription.overlayHideSeconds"
+				label="Hide the transcript after"
+				items={OVERLAY_HIDE_OPTIONS}
+				description="The transcript folds itself away this long after your last phrase, leaving just the small pill so it stops covering what is behind it. The next thing you say brings it straight back. You can also fold and unfold it yourself with the chevron on the transcript."
 			/>
 		{/if}
 	</Field.Group>
