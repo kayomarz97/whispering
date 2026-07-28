@@ -51,6 +51,14 @@ ${terms}
  * Deleting words the speaker said is the one failure a meaning-preserving pass
  * must not have.
  *
+ * The no-insertion rule is the same invariant from the other side, and was
+ * caught in the same runtime test: given the bare fragment "very very very
+ * tired", the model returned "I am very very very tired." Under a directive that
+ * says "fix grammar" a model will complete a fragment into a sentence, which
+ * puts words in the speaker's mouth just as surely as dropping them takes words
+ * out. Both directions are now pinned, so what comes back is the speaker's
+ * words with their mechanics fixed and nothing else.
+ *
  * Polish-only by design. The shared {@link buildSystemPrompt} stays a pure
  * Dictionary injector because Recipes call it too, and a reshape (an Email recipe
  * adding a greeting) legitimately adds and rewords text. This composer reuses it
@@ -69,6 +77,7 @@ Always, no matter what the directive above says:
 - Preserve the speaker's meaning and wording. Do not summarize, paraphrase, add ideas, or swap in synonyms.
 - Never collapse a repetition. A word or phrase spoken several times in a row is content, not a stutter: "cool cool cool" comes back three times, "no no no" comes back three times, "very very tired" keeps both "very"s. Reproduce every repeat exactly as many times as it was said, however redundant it looks.
 - Only a restatement in DIFFERENT words is a self-correction ("take 20 milligrams, sorry, 40 milligrams"): there, keep the corrected version and drop the retracted one. Saying the same word again is never a self-correction.
+- Do not add words the speaker did not say. Fixing grammar means punctuation, capitalisation, and obvious mistranscriptions — not completing a thought. A fragment stays a fragment: "very very tired" is punctuated as it stands, never expanded to "I am very very tired".
 - Return only the corrected text. No preamble, no commentary, no quotes, no code fences.`;
 	return buildSystemPrompt(scaffolded, dictionary);
 }

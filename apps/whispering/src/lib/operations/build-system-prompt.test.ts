@@ -65,6 +65,24 @@ describe('buildPolishSystemPrompt', () => {
 		).toBeLessThan(result.indexOf('Never collapse a repetition'));
 	});
 
+	test('pins the no-insertion side of the same invariant', () => {
+		// Caught in the same runtime test as the deletion bug: given the fragment
+		// "very very very tired", the model returned "I am very very very tired."
+		// A directive that says "fix grammar" invites a model to complete a
+		// thought, which puts words in the speaker's mouth as surely as dropping
+		// them takes words out.
+		const result = buildPolishSystemPrompt(
+			'Fix grammar and make it read well.',
+			[],
+		);
+
+		expect(result).toContain('Do not add words the speaker did not say');
+		expect(result).toContain('A fragment stays a fragment');
+		expect(
+			result.indexOf('Always, no matter what the directive above says'),
+		).toBeLessThan(result.indexOf('Do not add words the speaker did not say'));
+	});
+
 	test('a self-correction is a restatement in different words, not a repeat', () => {
 		// The old rule ("if the speaker corrects themselves mid-thought, keep only
 		// the corrected version and drop the retracted words") was the licence the
