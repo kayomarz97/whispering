@@ -519,3 +519,32 @@ Beware a false positive on Windows: `biome check` reads the **working copy**, an
 every such file as needing reformatting even though the committed blob is already correct.
 `git ls-files --eol` is the authority — `i/lf` means the commit is fine. Do not "fix"
 files you did not otherwise change; you would only be rewriting your own working copy.
+
+### Diagnosing bad "Polish" output — read the raw transcript first (2026-07-28)
+
+Whispering stores both the raw transcript and the polished text on every recording row
+(`transcript` and `polishedTranscript`), and the row's "Original" button toggles between
+them. When output is wrong, that toggle decides in one step whether the transcription
+model or the AI prompt is at fault — no guessing, no re-recording.
+
+Confirmed useful: a report that "cool cool cool" came out as "Cool" looked like Whisper
+collapsing repeats (which it is genuinely known for). The raw transcript read
+"Cool, cool, cool." — the transcription was perfect and the Polish prompt was deleting
+the words. Investigating Whisper first would have been wasted effort.
+
+`scratchpad/raw-vs-polished.js` does it over CDP: for each row, read the field, click
+"Original", read it again, click back.
+
+Two prompt lessons from the same investigation, both about a model's idea of "cleaning up":
+
+- **A repeated word reads as a stutter.** Any instruction resembling "drop the retracted
+  words when the speaker corrects themselves" licenses deleting "no no no" and
+  "cool cool cool" entirely. Scope self-correction to a restatement in *different* words
+  and say explicitly that repeating the same word is not one.
+- **"Fix grammar" licenses completing sentences.** The fragment "very very very tired"
+  came back as "I am very very very tired." If verbatim fidelity matters, say that fixing
+  grammar means punctuation and capitalisation only, and that a fragment stays a fragment.
+
+Both rules have to live in the part of the prompt that outranks the user's own directive;
+a user directive saying "never eat up words" did not survive an invariant block that said
+otherwise.
