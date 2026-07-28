@@ -52,7 +52,13 @@ export const DEFAULT_GLOBAL_BINDINGS = {
 	pushToTalk: null,
 	toggleManualRecording: { modifiers: TOGGLE_MODIFIERS, keys: ['space'] },
 	cancelRecording: { modifiers: CANCEL_MODIFIERS, keys: ['dot'] },
-	toggleVadRecording: null,
+	// Voice-activated capture shipped unbound, which left pause-triggered
+	// dictation unreachable from outside the app: the only way in was to focus
+	// the window and click a tab, which defeats the point of a dictation tool you
+	// drive while working somewhere else. It takes the same toggle chord as
+	// manual recording on `v` for voice, so the two live gestures read as a pair.
+	// Rebindable in Settings -> Shortcuts.
+	toggleVadRecording: { modifiers: TOGGLE_MODIFIERS, keys: ['keyV'] },
 	openRecipePicker: null,
 	runRecipeOnClipboard: null,
 	// Focused-reach command (ADR-0052): its reach ceiling clamps any key to the

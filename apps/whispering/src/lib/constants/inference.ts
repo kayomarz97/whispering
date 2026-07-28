@@ -69,21 +69,23 @@ export const INFERENCE = {
 		defaultBaseUrl: 'https://api.groq.com/openai/v1',
 		apiKeyConfigKey: 'providers.groq.apiKey',
 		endpointConfigKey: 'providers.groq.endpoint',
+		// Verified against GET https://api.groq.com/openai/v1/models on 2026-07-28.
+		// Groq retires models aggressively and answers a request for a retired one
+		// with a 400 "has been decommissioned", which the Polish pass surfaces as
+		// "Polishing skipped" and then ships the raw transcript. Every entry in the
+		// previous list except the two Llamas had been decommissioned, and the
+		// first entry is what a user gets when they switch the provider to Groq —
+		// so the default was a dead model and Polish never ran. Keep the strongest
+		// general-purpose model first for exactly that reason.
 		models: [
-			// Production models
-			'gemma2-9b-it',
-			'meta-llama/llama-guard-4-12b',
 			'llama-3.3-70b-versatile',
 			'llama-3.1-8b-instant',
-			// Preview models
-			'deepseek-r1-distill-llama-70b',
-			'meta-llama/llama-4-maverick-17b-128e-instruct',
-			'meta-llama/llama-4-scout-17b-16e-instruct',
-			'meta-llama/llama-prompt-guard-2-22m',
-			'meta-llama/llama-prompt-guard-2-86m',
-			'mistral-saba-24b',
-			'qwen-qwq-32b',
-			'qwen/qwen3-32b',
+			'openai/gpt-oss-120b',
+			'openai/gpt-oss-20b',
+			'qwen/qwen3.6-27b',
+			'groq/compound',
+			'groq/compound-mini',
+			'allam-2-7b',
 		],
 	},
 	Anthropic: {
