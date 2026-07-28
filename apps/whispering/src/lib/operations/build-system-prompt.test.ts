@@ -38,9 +38,44 @@ describe('buildPolishSystemPrompt', () => {
 		expect(result).toContain('Do not summarize, paraphrase, add ideas');
 		expect(result).toContain('Return only the corrected text.');
 		// Self-correction folds in as a scaffold rule, not a toggle.
-		expect(result).toContain('keep only the corrected version');
+		expect(result).toContain('keep the corrected version');
 		// The user directive is embedded inside the scaffold, not replacing it.
 		expect(result).toContain(DEFAULT);
+	});
+
+	test('pins repetition as an invariant the directive cannot weaken', () => {
+		// Models tidy a repeated word away as a stutter: "cool cool cool" came back
+		// as "Cool." and "no no no, that is not right" lost its "no"s, from a
+		// transcript that had all of them. A directive saying "never eat up words"
+		// did not stop it, so the rule belongs in the block that outranks the
+		// directive. A unit test can only assert the instruction is present and
+		// outranking; whether the model obeys is verified by running it.
+		const result = buildPolishSystemPrompt(
+			'Summarize aggressively and remove anything redundant.',
+			[],
+		);
+
+		expect(result).toContain('Never collapse a repetition');
+		expect(result).toContain(
+			'Reproduce every repeat exactly as many times as it was said',
+		);
+		// It sits under the clause that overrides the directive above it.
+		expect(
+			result.indexOf('Always, no matter what the directive above says'),
+		).toBeLessThan(result.indexOf('Never collapse a repetition'));
+	});
+
+	test('a self-correction is a restatement in different words, not a repeat', () => {
+		// The old rule ("if the speaker corrects themselves mid-thought, keep only
+		// the corrected version and drop the retracted words") was the licence the
+		// model used to delete repeats. Narrowed, so the two cases cannot be
+		// confused.
+		const result = buildPolishSystemPrompt(DEFAULT, []);
+
+		expect(result).toContain('restatement in DIFFERENT words');
+		expect(result).toContain(
+			'Saying the same word again is never a self-correction',
+		);
 	});
 
 	test('keeps the anti-injection guard even for a command-shaped directive', () => {

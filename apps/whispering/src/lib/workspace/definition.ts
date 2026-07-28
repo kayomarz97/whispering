@@ -312,9 +312,18 @@ const dictionary = {
 	dictionary: defineKv(Type.Array(Type.String()), (): string[] => []),
 } as const;
 
-/** Default Polish instruction. Kept faithful: fix mechanics, preserve wording. */
+/**
+ * Default Polish instruction. Kept faithful: fix mechanics, drop the sounds
+ * nobody means to say, and change nothing else.
+ *
+ * Filler removal is named rather than left to the model's judgement. It is what
+ * people expect a dictation tool to do, and stating it means the model is not
+ * inferring how much tidying is wanted — which is where it starts deleting
+ * repeated words too. What may be removed is now a short closed list; the
+ * scaffold in `buildPolishSystemPrompt` guarantees nothing else goes.
+ */
 const DEFAULT_POLISH_INSTRUCTIONS =
-	'Fix grammar and punctuation. Keep my wording.';
+	'Fix grammar and punctuation, and remove filler sounds (um, uh, er, ah, hmm). Keep everything else exactly as I said it.';
 
 /**
  * Polish: the always-on, meaning-preserving AI base, run once after every

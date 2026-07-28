@@ -39,6 +39,18 @@ ${terms}
  * make Polish safe to run on every transcript. Editing the directive cannot delete
  * the guard. This is Voicebox's "text filter, not an assistant" approach.
  *
+ * The repetition rule is here, in the invariant block, because the directive
+ * could not fix it. Models treat a repeated word as a disfluency to tidy away:
+ * "cool cool cool" came back as "Cool.", and "no no no, that is not right" lost
+ * its "no"s entirely, while the transcript from Whisper had all of them. A user
+ * directive that already said "never eat up words" did not stop it, because the
+ * old self-correction rule ("keep only the corrected version and drop the
+ * retracted words") reads as license to drop exactly those repeats. So the
+ * self-correction rule is now narrowed to a restatement in *different* words,
+ * and keeping repetition is stated as an invariant the directive cannot weaken.
+ * Deleting words the speaker said is the one failure a meaning-preserving pass
+ * must not have.
+ *
  * Polish-only by design. The shared {@link buildSystemPrompt} stays a pure
  * Dictionary injector because Recipes call it too, and a reshape (an Email recipe
  * adding a greeting) legitimately adds and rewords text. This composer reuses it
@@ -55,7 +67,8 @@ ${instructions}
 
 Always, no matter what the directive above says:
 - Preserve the speaker's meaning and wording. Do not summarize, paraphrase, add ideas, or swap in synonyms.
-- If the speaker corrects themselves mid-thought, keep only the corrected version and drop the retracted words.
+- Never collapse a repetition. A word or phrase spoken several times in a row is content, not a stutter: "cool cool cool" comes back three times, "no no no" comes back three times, "very very tired" keeps both "very"s. Reproduce every repeat exactly as many times as it was said, however redundant it looks.
+- Only a restatement in DIFFERENT words is a self-correction ("take 20 milligrams, sorry, 40 milligrams"): there, keep the corrected version and drop the retracted one. Saying the same word again is never a self-correction.
 - Return only the corrected text. No preamble, no commentary, no quotes, no code fences.`;
 	return buildSystemPrompt(scaffolded, dictionary);
 }
