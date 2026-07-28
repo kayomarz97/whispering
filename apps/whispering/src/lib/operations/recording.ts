@@ -261,11 +261,41 @@ function cancelPendingVadResume() {
 // The countdown measures silence and nothing else: it is dropped the moment
 // speech latches and restarted from the pause that ends each phrase, so it can
 // never cut off someone mid-dictation, only someone who has stopped.
+//
+// That leaves one hole, which the watchdog below closes. The countdown only
+// runs while nothing is latched, so on its own it bounds silence but not the
+// session: audio that keeps the detector latched with no
+// pause long enough to end a phrase produces neither a speech end nor a
+// misfire, and the session stays armed indefinitely — exactly the "a call, a
+// film, the room" case the setting promises to end. Silero segments real
+// speech on any pause, so a latch this long is not a person dictating, and
+// ending it is the safe answer. Generous enough that it can only ever fire on
+// something pathological.
+const VAD_LATCHED_MAX_MS = 5 * 60 * 1000;
+
 let vadSilenceTimer: ReturnType<typeof setTimeout> | undefined;
+let vadLatchedTimer: ReturnType<typeof setTimeout> | undefined;
 
 function clearVadSilenceTimeout() {
 	clearTimeout(vadSilenceTimer);
 	vadSilenceTimer = undefined;
+	clearTimeout(vadLatchedTimer);
+	vadLatchedTimer = undefined;
+}
+
+/** Bound a speech latch that never ends, while the countdown is stood down. */
+function armVadLatchedWatchdog() {
+	clearTimeout(vadLatchedTimer);
+	// "Never disarm" means never, including here.
+	if (settings.get('recording.vadSilenceTimeoutSeconds') <= 0) return;
+	vadLatchedTimer = setTimeout(() => {
+		vadLatchedTimer = undefined;
+		if (!isVadRecordingActive()) return;
+		log.info(
+			'Voice activated capture latched on speech for 5 minutes with no pause, stopping listening',
+		);
+		void stopVadRecording();
+	}, VAD_LATCHED_MAX_MS);
 }
 
 function restartVadSilenceTimeout() {
@@ -322,7 +352,8 @@ export async function startVadRecording() {
 		? Math.max(
 				1,
 				Math.round(
-					settings.get('liveTranscription.minSpeechSeconds') / VAD_FRAME_SECONDS,
+					settings.get('liveTranscription.minSpeechSeconds') /
+						VAD_FRAME_SECONDS,
 				),
 			)
 		: undefined;
@@ -336,8 +367,9 @@ export async function startVadRecording() {
 			// tint shows speech was detected, so there is no toast.
 			pausePlaybackForSpeech();
 			// Someone is talking, so the idle countdown has no claim until they
-			// stop again.
+			// stop again — but a latch that never ends still has to be bounded.
 			clearVadSilenceTimeout();
+			armVadLatchedWatchdog();
 			// Speaking is activity too: bring back a card the idle timer folded,
 			// rather than making the user wait for the phrase to transcribe.
 			overlayTranscript.noteActivity(

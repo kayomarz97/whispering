@@ -41,9 +41,9 @@ function attachRecordingOverlay() {
 	void recordingOverlayAction
 		.listen((event) => dispatchPillAction(event.payload))
 		.then(trackUnlistener);
-	// Where the user dragged the overlay to. The main window is the side that
-	// knows which positions it commanded, so it is the side that can tell a drag
-	// from its own `setPosition` echoing back.
+	// Every move the overlay window makes. The window manager sorts the user's
+	// drags from its own repositioning by matching against the positions it
+	// commanded, and remembers the former.
 	void recordingOverlayMoved
 		.listen((event) => recordOverlayMove(event.payload))
 		.then(trackUnlistener);

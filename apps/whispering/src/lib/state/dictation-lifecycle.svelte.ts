@@ -49,11 +49,28 @@ export type DictationFailure = {
 
 // How long a clean delivery's checkmark flashes before the outcome retires to
 // `none`. Sub-second: the transcribed text landing is the real receipt, so this
-// is a glance confirming it, not a notice to read. Only the clean `output` reach
-// flashes; a reduced reach persists instead (see `markDelivered`). (A live VAD
-// session projects `delivered` to no pip, so this flash only ever shows once
-// capture is idle.)
+// is a glance confirming it, not a notice to read. (A live VAD session projects
+// `delivered` to no pip, so this flash only ever shows once capture is idle.)
 const DELIVERED_FLASH_MS = 900;
+
+// How long the outcomes that carry real information — a reduced reach, or a
+// failure — stay up before retiring. Long enough to read and act on, and then
+// gone.
+//
+// These used to hold until the next dictation, on the reasoning that they say
+// something the landing text does not. That reasoning still holds; what changed
+// is the surface. The desktop overlay now rests permanently on screen as a small
+// handle, and a held outcome does not merely linger — it occupies that handle's
+// place indefinitely, so the affordance the user is told to click to start
+// dictating is instead a stale notice that raises the app window. For anyone
+// whose cursor writes cannot paste (no Accessibility grant), every single
+// dictation ends in `clipboard`, which would leave the handle permanently
+// unreachable from the first dictation onward.
+//
+// Nothing is lost by retiring them: ADR-0039 already puts the durable record on
+// the recordings row and the OS notification, and calls the pill a glance.
+const REDUCED_REACH_HOLD_MS = 6_000;
+const FAILURE_HOLD_MS = 8_000;
 
 function createDictationLifecycle() {
 	// The outcome track is the ephemeral signal directly: `none` when no utterance
@@ -61,11 +78,32 @@ function createDictationLifecycle() {
 	// when a new dictation begins so a stale `failed` never lingers past the next
 	// attempt.
 	let outcome = $state<DictationOutcome>({ kind: 'none' });
-	let deliveredTimer: ReturnType<typeof setTimeout> | undefined;
+	let retireTimer: ReturnType<typeof setTimeout> | undefined;
+	// Counts outcome changes, so a pending retirement can tell whether the
+	// outcome it was scheduled for is still the current one.
+	//
+	// Deliberately a counter and not an identity check against the outcome
+	// object: `$state` deep-proxies what is assigned to it, so `outcome` reads
+	// back as a proxy and never `===` the plain object that was stored. Written
+	// that way first, it made the guard permanently false and nothing ever
+	// retired — a failed dictation held the overlay forever, which is the exact
+	// defect this retirement exists to fix.
+	let outcomeGeneration = 0;
 
-	function clearDeliveredTimer() {
-		clearTimeout(deliveredTimer);
-		deliveredTimer = undefined;
+	function setOutcome(next: DictationOutcome) {
+		clearTimeout(retireTimer);
+		retireTimer = undefined;
+		outcomeGeneration += 1;
+		outcome = next;
+	}
+
+	/** Retire this outcome after `delayMs`, unless a newer one has taken over. */
+	function retireAfter(delayMs: number) {
+		const generation = outcomeGeneration;
+		retireTimer = setTimeout(() => {
+			retireTimer = undefined;
+			if (outcomeGeneration === generation) setOutcome({ kind: 'none' });
+		}, delayMs);
 	}
 
 	// The live session, read straight off the recorder machines. The pill owner is
@@ -95,14 +133,12 @@ function createDictationLifecycle() {
 		 * so it does not linger into this attempt.
 		 */
 		reset(): void {
-			clearDeliveredTimer();
-			outcome = { kind: 'none' };
+			setOutcome({ kind: 'none' });
 		},
 
 		/** The recorder stopped (or a VAD utterance ended); now transcribing. */
 		markTranscribing(): void {
-			clearDeliveredTimer();
-			outcome = { kind: 'transcribing' };
+			setOutcome({ kind: 'transcribing' });
 		},
 
 		/**
@@ -113,8 +149,7 @@ function createDictationLifecycle() {
 		 * delivered.
 		 */
 		markPolishing(): void {
-			clearDeliveredTimer();
-			outcome = { kind: 'polishing' };
+			setOutcome({ kind: 'polishing' });
 		},
 
 		/**
@@ -122,33 +157,27 @@ function createDictationLifecycle() {
 		 * output: either a clean `output` or a `clipboard` fallback. Both reaches are
 		 * successes because the text is saved, so neither is a dictation failure.
 		 *
-		 * A clean `output` flashes for a beat and retires: the landing text is the
-		 * receipt, so the pill is just a glance. The reduced `clipboard` reach instead
-		 * persists until the next dictation, like a failure does:
-		 * the text did not land where the user asked, so the tag carries information
-		 * the text alone does not, and a sub-second flash is too easy to miss. There
-		 * is no notification for a reduced reach (ADR-0039): the persistent pill tag
-		 * and the recordings row are the surfaces, and a revoked Accessibility grant
-		 * already raises its own standing notice.
+		 * A clean `output` flashes for a beat: the landing text is the receipt, so
+		 * the pill is just a glance. The reduced `clipboard` reach holds several
+		 * times longer, because the text did not land where the user asked and the
+		 * tag carries information the text alone does not — a sub-second flash
+		 * would be too easy to miss. There is no notification for a reduced reach
+		 * (ADR-0039): the pill tag and the recordings row are the surfaces, and a
+		 * revoked Accessibility grant already raises its own standing notice.
 		 */
 		markDelivered(reach: DeliveryReach): void {
-			clearDeliveredTimer();
-			outcome = { kind: 'delivered', reach };
-			// Only the clean reach auto-retires; a reduced reach stays put.
-			if (reach !== 'output') return;
-			deliveredTimer = setTimeout(() => {
-				deliveredTimer = undefined;
-				// Only retire the flash if a newer outcome has not taken over.
-				if (outcome.kind === 'delivered') outcome = { kind: 'none' };
-			}, DELIVERED_FLASH_MS);
+			setOutcome({ kind: 'delivered', reach });
+			retireAfter(
+				reach === 'output' ? DELIVERED_FLASH_MS : REDUCED_REACH_HOLD_MS,
+			);
 		},
 
-		/** A dictation failed: hold the failed outcome until the next dictation
-		 * resets it. Transient, not a held state: the pill glances it (manual), the
+		/** A dictation failed: hold the failed outcome long enough to read, then
+		 * retire it. Transient, not a held state: the pill glances it (manual), the
 		 * notification path fires it, and the recordings row is the durable record. */
 		markFailed(failure: DictationFailure): void {
-			clearDeliveredTimer();
-			outcome = { kind: 'failed', ...failure };
+			setOutcome({ kind: 'failed', ...failure });
+			retireAfter(FAILURE_HOLD_MS);
 		},
 	};
 }

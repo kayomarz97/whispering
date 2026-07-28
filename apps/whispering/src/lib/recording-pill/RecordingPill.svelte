@@ -86,6 +86,14 @@
 
 	function onDragSurfacePointerMove(event: PointerEvent) {
 		if (!onDragStart || !pressOrigin || didDrag) return;
+		// A press this element never saw released — the overlay window can be
+		// hidden out from under one — would otherwise leave `pressOrigin` set, and
+		// the next plain hover would hand the window to the OS move loop with no
+		// button held, leaving it stuck to the cursor until the user clicks.
+		if (event.buttons === 0) {
+			pressOrigin = null;
+			return;
+		}
 		const travelled = Math.hypot(
 			event.clientX - pressOrigin.x,
 			event.clientY - pressOrigin.y,
@@ -206,6 +214,8 @@
 		onpointerdown={onDragSurfacePointerDown}
 		onpointermove={onDragSurfacePointerMove}
 		onpointerup={onDragSurfacePointerUp}
+		onpointercancel={onDragSurfacePointerUp}
+		onpointerleave={onDragSurfacePointerUp}
 		onclick={() => {
 			if (didDrag) {
 				didDrag = false;
@@ -238,6 +248,8 @@
 					onpointerdown={onDragSurfacePointerDown}
 					onpointermove={onDragSurfacePointerMove}
 					onpointerup={onDragSurfacePointerUp}
+					onpointercancel={onDragSurfacePointerUp}
+					onpointerleave={onDragSurfacePointerUp}
 					onclick={(event) => {
 						event.stopPropagation();
 						if (didDrag) {
@@ -258,6 +270,8 @@
 					onpointerdown={onDragSurfacePointerDown}
 					onpointermove={onDragSurfacePointerMove}
 					onpointerup={onDragSurfacePointerUp}
+					onpointercancel={onDragSurfacePointerUp}
+					onpointerleave={onDragSurfacePointerUp}
 				>
 					{recording.liveTranscript}
 					<button
@@ -308,6 +322,8 @@
 		onpointerdown={onDragSurfacePointerDown}
 		onpointermove={onDragSurfacePointerMove}
 		onpointerup={onDragSurfacePointerUp}
+		onpointercancel={onDragSurfacePointerUp}
+		onpointerleave={onDragSurfacePointerUp}
 		onclick={onPillClick}
 	>
 		{#if recording}

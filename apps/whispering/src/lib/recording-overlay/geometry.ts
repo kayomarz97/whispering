@@ -73,10 +73,10 @@ export type MonitorBounds = {
  */
 export function overlaySize(view: RecordingOverlayView): OverlaySize {
 	const { status } = view;
-	// Between dictations the window shrinks to the resting handle. Its size is
-	// still computed (rather than skipped) when the handle is off, because the
-	// window is sized before it is hidden and a stale size would flash at the
-	// next show.
+	// Between dictations the window shrinks to the resting handle. The size is
+	// reported regardless of whether the handle is switched on — a hidden window
+	// has no size worth arguing about, and answering unconditionally keeps this a
+	// total function of the view rather than one with a hole in it.
 	if (!status) {
 		return {
 			width: OVERLAY_HANDLE_WIDTH,
@@ -129,6 +129,33 @@ export function overlayAnchorFrom(placement: {
 	};
 }
 
+/**
+ * A point that is genuinely inside a window anchored at `anchor`, for asking
+ * which monitor it is on.
+ *
+ * The anchor is the window's bottom edge, which is one row *past* the last row
+ * the window occupies — so an overlay dropped flush with a monitor's bottom
+ * produces an anchor no monitor contains. On stacked displays that point falls
+ * inside the monitor *below*, and the overlay would reappear pinned to the top
+ * of the wrong screen on every launch; side by side, it falls through to
+ * wherever the window currently is, which at startup is the monitor it was
+ * created on. Probing one row up keeps the question about the window itself.
+ */
+export function anchorProbePoint(anchor: Point): Point {
+	return { x: anchor.x, y: anchor.y - 1 };
+}
+
+/** The physical size a logical overlay size takes on `monitor`. */
+export function physicalSizeOn(
+	monitor: MonitorBounds,
+	size: OverlaySize,
+): OverlaySize {
+	return {
+		width: Math.round(size.width * monitor.scaleFactor),
+		height: Math.round(size.height * monitor.scaleFactor),
+	};
+}
+
 // `max < min` when the window is wider or taller than the monitor: pin to the
 // left/top edge rather than letting the clamp invert and shove it off the far
 // side.
@@ -150,8 +177,12 @@ export function overlayPosition(input: {
 	size: OverlaySize;
 }): Point {
 	const { anchor, monitor, size } = input;
-	const width = Math.round(size.width * monitor.scaleFactor);
-	const height = Math.round(size.height * monitor.scaleFactor);
+	// Deliberately the same conversion the caller applies to the window, against
+	// the same monitor. Sizing the window logically (letting Tauri convert with
+	// whichever scale factor the window is currently on) while placing it with
+	// the target monitor's scale factor puts the two out of step on a mixed-DPI
+	// desktop, and the window settles beside its remembered centre.
+	const { width, height } = physicalSizeOn(monitor, size);
 
 	const x = anchor
 		? anchor.x - Math.round(width / 2)

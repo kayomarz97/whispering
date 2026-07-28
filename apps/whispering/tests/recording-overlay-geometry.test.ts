@@ -16,6 +16,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { RecordingOverlayView } from '../src/lib/recording-overlay/events';
 import {
+	anchorProbePoint,
 	type MonitorBounds,
 	monitorContains,
 	OVERLAY_COLLAPSED_HEIGHT,
@@ -29,6 +30,7 @@ import {
 	overlayIsVisible,
 	overlayPosition,
 	overlaySize,
+	physicalSizeOn,
 } from '../src/lib/recording-overlay/geometry';
 import type { RecordingPillStatus } from '../src/lib/recording-pill/model';
 
@@ -70,9 +72,9 @@ const secondary: MonitorBounds = {
 
 describe('overlayIsVisible', () => {
 	test('a dictation always shows the overlay', () => {
-		expect(overlayIsVisible(view({ phase: 'recording', trigger: 'manual' }))).toBe(
-			true,
-		);
+		expect(
+			overlayIsVisible(view({ phase: 'recording', trigger: 'manual' })),
+		).toBe(true);
 		expect(
 			overlayIsVisible({
 				status: { phase: 'transcribing' },
@@ -139,7 +141,7 @@ describe('overlaySize', () => {
 		// The whole point: a folded overlay covers a fraction of the screen a
 		// live one does.
 		expect(folded.width * folded.height).toBeLessThan(
-			OVERLAY_LIVE_WIDTH * OVERLAY_LIVE_HEIGHT / 3,
+			(OVERLAY_LIVE_WIDTH * OVERLAY_LIVE_HEIGHT) / 3,
 		);
 	});
 });
@@ -149,6 +151,54 @@ describe('overlayAnchorFrom', () => {
 		expect(
 			overlayAnchorFrom({ x: 100, y: 200, width: 224, height: 40 }),
 		).toEqual({ x: 212, y: 240 });
+	});
+
+	test('an anchor at a monitor edge still probes onto that monitor', () => {
+		// The anchor is the window's bottom edge, one row past the last row it
+		// occupies, so an overlay dropped flush with the bottom of a screen has an
+		// anchor NO monitor contains. Left uncorrected, a stacked second monitor
+		// claims it and the overlay reappears pinned to the top of the wrong
+		// screen at every launch; side by side, it falls through to whichever
+		// monitor the window happens to be on.
+		const stackedBelow: MonitorBounds = {
+			x: 0,
+			y: 1080,
+			width: 1920,
+			height: 1080,
+			scaleFactor: 1,
+		};
+		const flushWithBottom = overlayAnchorFrom({
+			x: 800,
+			y: 1080 - OVERLAY_HEIGHT,
+			width: OVERLAY_WIDTH,
+			height: OVERLAY_HEIGHT,
+		});
+		expect(flushWithBottom.y).toBe(1080);
+		expect(monitorContains(primary, flushWithBottom)).toBe(false);
+		expect(monitorContains(stackedBelow, flushWithBottom)).toBe(true);
+
+		const probe = anchorProbePoint(flushWithBottom);
+		expect(monitorContains(primary, probe)).toBe(true);
+		expect(monitorContains(stackedBelow, probe)).toBe(false);
+	});
+});
+
+describe('physicalSizeOn', () => {
+	test('is the same conversion overlayPosition uses', () => {
+		// Size and position must agree on one scale factor. Sizing the window
+		// logically — letting Tauri convert with whichever monitor the window is
+		// currently on — while placing it with the target monitor's factor leaves
+		// the two out of step across a mixed-DPI desktop, and the window settles
+		// beside its remembered centre by half the difference.
+		const size = { width: OVERLAY_WIDTH, height: OVERLAY_HEIGHT };
+		const anchor = { x: 3000, y: 1200 };
+		const physical = physicalSizeOn(secondary, size);
+		expect(physical).toEqual({ width: 280, height: 50 });
+
+		const { x } = overlayPosition({ anchor, monitor: secondary, size });
+		// The anchor is the horizontal centre, so the gap either side of it must be
+		// exactly half the physical width the caller is about to apply.
+		expect(anchor.x - x).toBe(Math.round(physical.width / 2));
 	});
 });
 

@@ -44,14 +44,23 @@ export const recordingOverlayAction = defineWindowEvent<RecordingPillAction>(
 );
 
 /**
- * overlay -> main: the user dragged the overlay somewhere new, in PHYSICAL
- * pixels (the units `tauri://move` reports).
+ * overlay -> main: the overlay window moved, in PHYSICAL pixels (the units
+ * `tauri://move` reports).
  *
- * Only sent for moves the overlay itself started, never for the main window's
- * own `setPosition` echoing back. The overlay is the only side that knows which
- * is which — it is the side that called `startDragging` — so filtering here is
- * exact, where the main window could only guess by comparing coordinates, and
- * would guess wrong whenever a resize and a reposition interleaved.
+ * Every move is forwarded, including the main window's own `setPosition`
+ * echoing back, and the main window separates them by matching against the
+ * positions it has recently commanded. Matching against a *set* rather than a
+ * single last value is the whole point: a live session resizes and repositions
+ * the overlay repeatedly, so an echo routinely arrives after a newer position
+ * has already been commanded, and a one-value comparison misreads it as a drag.
+ *
+ * `dragging` is the overlay's own account of whether a drag is in flight,
+ * derived from having called `startDragging` and from moves still arriving. It
+ * is a hint, never the correctness mechanism: it tells the main window to hold
+ * off resizing the window out from under the OS move loop, so getting it wrong
+ * costs a visual jolt rather than a wrong remembered position. It cannot be the
+ * mechanism, because the move loop reports nothing while the user holds still —
+ * a pause mid-drag is indistinguishable from letting go.
  */
 export const recordingOverlayMoved = defineWindowEvent<{
 	x: number;
@@ -66,6 +75,8 @@ export const recordingOverlayMoved = defineWindowEvent<{
 	 */
 	width: number;
 	height: number;
+	/** The overlay believes a user drag is in flight. A hint; see above. */
+	dragging: boolean;
 }>('recording-overlay:moved');
 
 /** overlay -> main: reveal the main Whispering window. */

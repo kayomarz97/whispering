@@ -52,20 +52,13 @@
 					level = foldMicLevel(level, event.payload);
 				}),
 			);
-			// Report where the user drags this window, so the main window can
-			// remember the spot. Only drags: the main window repositions the overlay
-			// on every status (a live VAD session pushes one per speech transition,
-			// each resize moves it to keep the pill still), and each of those moves
-			// is reported here exactly like a drag. Reporting them all and having
-			// the main window discard its own echoes by comparing coordinates was
-			// tried first and is not sound — a resize and a reposition can interleave
-			// so that an echo no longer matches the last commanded position, and the
-			// remembered spot drifts back toward the corner. This side knows the
-			// answer for free: it is the side that called `startDragging`.
+			// Report every move, with this side's account of whether a drag is in
+			// flight. The main window separates its own repositioning from a real
+			// drag by matching against the positions it commanded; see the event's
+			// documentation for why the drag flag cannot be the mechanism.
 			trackUnlistener(
 				await getCurrentWindow().onMoved((event) => {
-					if (!isDraggingWindow) return;
-					keepDragAliveUntilMovesStop();
+					if (isDraggingWindow) keepDragAliveUntilMovesStop();
 					// The overlay is undecorated with no shadow, so its client area is
 					// its window: the viewport in device pixels is the window's physical
 					// size, measured without a Tauri round trip or a size permission.
@@ -74,6 +67,7 @@
 						y: event.payload.y,
 						width: Math.round(window.innerWidth * window.devicePixelRatio),
 						height: Math.round(window.innerHeight * window.devicePixelRatio),
+						dragging: isDraggingWindow,
 					});
 				}),
 			);
@@ -96,10 +90,13 @@
 	// A drag is bounded by its move reports, not by a pointer release: once
 	// `startDragging` hands the pointer to the Windows move loop, this document
 	// stops receiving pointer events entirely, so there is no `pointerup` to end
-	// on. The moves themselves are the signal — they stream while the user drags
-	// and stop when they let go — so the drag is held open for a beat past the
-	// last one and closed when none follows.
-	const DRAG_SETTLE_MS = 600;
+	// on. The moves are the only signal available, and they are an imperfect one —
+	// the loop reports nothing while the user holds still, so a pause mid-drag
+	// reads exactly like letting go. That is why this flag only ever suppresses
+	// resizing (where a wrong answer costs a visual jolt) and never decides which
+	// moves are remembered. Generous, because ending it early is the failure that
+	// matters and ending it late costs one delayed resize.
+	const DRAG_SETTLE_MS = 1_500;
 	let isDraggingWindow = false;
 	let dragSettleTimer: ReturnType<typeof setTimeout> | undefined;
 
