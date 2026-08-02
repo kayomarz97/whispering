@@ -48,10 +48,52 @@ const COMMANDS: &[&str] = &[
 fn main() {
     bake_transcribe_rpath();
     stage_transcribe_runtime();
+    give_test_binaries_a_manifest();
 
     let manifest = tauri_build::AppManifest::new().commands(COMMANDS);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("failed to build Epicenter's Tauri manifest");
+}
+
+/// Give Windows test binaries the Common Controls v6 activation context that
+/// `tauri_build` only embeds into the *application* binary.
+///
+/// Without it `cargo test` cannot run at all on Windows: the dependency graph
+/// statically imports `TaskDialogIndirect` from `comctl32.dll`, that export
+/// exists only in the side-by-side Common Controls **v6** assembly, and an
+/// executable with no manifest resolves `comctl32.dll` to System32's v5.82 —
+/// which does not export it. The loader then kills the process with
+/// `STATUS_ENTRYPOINT_NOT_FOUND` (0xC0000139) before `main` runs, so every test
+/// in the crate "fails" without a single one having been executed.
+///
+/// The app binary never hit this because `tauri_build` embeds a manifest into
+/// it. Cargo's test harness executables are separate link targets and get
+/// nothing, which is what `rustc-link-arg-tests` exists for.
+///
+/// Declared inline rather than through a checked-in `.manifest` file on
+/// purpose: the whole content is this one dependency, and a separate file is a
+/// second place for it to rot.
+fn give_test_binaries_a_manifest() {
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows")
+        || env::var("CARGO_CFG_TARGET_ENV").as_deref() != Ok("msvc")
+    {
+        return;
+    }
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!(
+        "cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' \
+         name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+         processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'"
+    );
+    // …but NOT for the application binary, which already links `tauri_build`'s
+    // resource carrying RT_MANIFEST id 1. Two manifests is a hard link failure
+    // (`CVT1100: duplicate resource` → `LNK1123`), and `rustc-link-arg-tests`
+    // cannot be used instead because Cargo classifies the lib's unit-test
+    // executable as the *lib* target compiled in test mode, not as a test
+    // target — verified by grepping the linker invocation, where the
+    // `-tests` form never appeared. `/MANIFEST:NO` last wins for link.exe, and
+    // bin-scoped arguments are appended after the general ones.
+    println!("cargo:rustc-link-arg-bins=/MANIFEST:NO");
 }
 
 /// Bake the rpaths the shared `libtranscribe` needs on Linux. Windows resolves

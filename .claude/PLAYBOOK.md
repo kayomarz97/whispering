@@ -661,3 +661,52 @@ appeared (in the wrong place), and the log named the failing step.
   Cargo.toml; it errored and was nearly treated as a completed clean (i.e. as if the ACL had
   been rebaked before rebuilding). **Fix/prevention:** `cd` into `src-tauri` for cargo commands
   in this repo, and check the exit status of a clean/build before assuming it took effect. (seen 1x)
+
+### `cargo test` on Windows — the missing manifest, not the missing DLLs (verified 2026-08-02)
+
+This repo's Rust tests were written off for weeks as environmentally broken: the test binary
+exited with `STATUS_ENTRYPOINT_NOT_FOUND` (0xC0000139) before running anything, and the
+recorded cause was "the transcribe-cpp DLLs stage into `C:/t/debug` but the harness runs from
+`C:/t/debug/deps`". **That diagnosis was wrong.** Copying every DLL into `deps/` changes
+nothing, and removing them again changes nothing.
+
+The real cause: the dependency graph (`rfd`, via `tauri-plugin-dialog`) statically imports
+**`TaskDialogIndirect` from `comctl32.dll`**. That export lives only in the side-by-side
+Common Controls **v6** assembly. An executable with no application manifest resolves
+`comctl32.dll` to `C:\Windows\System32\comctl32.dll` — **v5.82**, which does not export it —
+so the loader terminates the process before `main`. `tauri_build` embeds a manifest into the
+*application binary*; Cargo's test executable is a separate link target and got none.
+
+**How to tell this apart from a missing-DLL problem, quickly.** `STATUS_ENTRYPOINT_NOT_FOUND`
+(0xC0000139) means a DLL *was* found and an export was missing; a genuinely absent DLL is
+`STATUS_DLL_NOT_FOUND` (0xC0000135). Then:
+
+- `dumpbin /dependents <exe>` for the import list, `dumpbin /exports <dll>` for what the
+  resolved DLL actually provides, and diff. That is what named `TaskDialogIndirect` here.
+- Searching the raw bytes of a PE for `Microsoft.Windows.Common-Controls` is a reliable
+  one-liner for "does this binary have a manifest" — `dumpbin /manifest` reported *no*
+  manifest for binaries that demonstrably have one, so do not trust it.
+- Do **not** trust `LoadLibraryEx` from PowerShell as a proxy for launching the process: the
+  host already has comctl32 v6 in its activation context, so the load succeeds and the
+  failure is masked.
+
+**The fix, and its two traps** (`build.rs::give_test_binaries_a_manifest`):
+
+```rust
+println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+println!("cargo:rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' name='Microsoft.Windows.Common-Controls' version='6.0.0.0' processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'");
+println!("cargo:rustc-link-arg-bins=/MANIFEST:NO");
+```
+
+1. **`cargo:rustc-link-arg-tests` does not apply to `cargo test --lib`.** Cargo classifies the
+   lib's unit-test executable as the *lib* target compiled in test mode, not a test target.
+   Confirmed by grepping the verbose linker invocation — the flag never arrives. Only the
+   unqualified `cargo:rustc-link-arg` reaches it.
+2. **…which then also reaches the app binary**, where `tauri_build`'s resource already carries
+   RT_MANIFEST id 1. Two of them is a hard link failure: `CVT1100: duplicate resource` →
+   `LNK1123: failure during conversion to COFF`. `rustc-link-arg-bins=/MANIFEST:NO` cancels
+   generation for bins only; the last `/MANIFEST` wins in link.exe.
+
+Verify a change here by checking **both** sides: `cargo test --lib` runs, *and*
+`cargo build --release` links, *and* each binary contains exactly one
+`Microsoft.Windows.Common-Controls` occurrence.
