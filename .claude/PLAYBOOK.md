@@ -641,3 +641,23 @@ and build. The command then rejects with `Command plugin:window|<name> not allow
 every call — a real, repeatable failure at exactly the layer under test. That is how the
 "the bar sometimes never appears" fix was proven: with `set_position` denied, the bar still
 appeared (in the wrong place), and the log named the failing step.
+
+## Mistakes ledger
+
+> Repo-specific traps, one bullet each: rule first, then what happened, then the fix.
+> Entries reaching (seen 2x) get promoted to a one-line rule in this project's CLAUDE.md.
+
+- **2026-08 · Fault-injecting a window command via console monkey-patch will silently not
+  reproduce in this app.** Patching `window.__TAURI_INTERNALS__.invoke` over CDP looked like
+  it worked (new own properties stuck) but every real call still hit the original, since
+  `writable: false, configurable: false`; the empty fault log was misread as "the code path
+  never ran." **Fix/prevention:** check `Object.getOwnPropertyDescriptor` before concluding an
+  injected fault "did not reproduce"; fault-inject via the ACL instead — see "This app's Tauri
+  IPC cannot be monkey-patched from the console" above for the drop-permission/clean/rebuild
+  recipe. (seen 1x)
+
+- **2026-08 · `cargo` commands for this app run from `apps/epicenter/src-tauri`, not from
+  `apps/epicenter`.** Ran `cargo clean -p epicenter --release` in `apps/epicenter`, which has no
+  Cargo.toml; it errored and was nearly treated as a completed clean (i.e. as if the ACL had
+  been rebaked before rebuilding). **Fix/prevention:** `cd` into `src-tauri` for cargo commands
+  in this repo, and check the exit status of a clean/build before assuming it took effect. (seen 1x)
