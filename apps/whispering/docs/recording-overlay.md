@@ -13,8 +13,9 @@ from Rust because Handy's recording lifecycle lives in Rust. Pushing our overlay
 into Rust would split the source of truth, so we keep it in the main window.
 
 - **Window**: a separate, transparent, undecorated, always-on-top
-  `recording-overlay` window, reused (shown/hidden) and positioned centered near
-  the bottom of the active monitor. On macOS it is a non-activating `NSPanel`
+  `recording-overlay` window, reused (shown/hidden) and positioned against
+  whichever screen edge the user last dropped it on. On macOS it is a
+  non-activating `NSPanel`
   created in Rust (`../../epicenter/src-tauri/src/overlay.rs`, via
   tauri-nspanel) so clicking it never activates the app or raises the main
   window; `focusable: false` alone does not prevent app activation on click. On
@@ -61,6 +62,58 @@ into Rust would split the source of truth, so we keep it in the main window.
 
 The single source of recorder state means no parallel recording lifecycle is
 introduced: the overlay only reflects and triggers the existing operations.
+
+## Which way round the bar lies
+
+The bar is always parallel to the screen edge it is docked against: flat along
+the top and bottom, upright down the left and right. A 224px-wide bar pinned to
+the right-hand edge would have to stick out into the middle of the screen to fit
+at all, which is the whole reason this exists.
+
+- **Which edge** (`geometry.ts::edgeForRect`): the nearest monitor edge to the
+  window's centre. Nearest-edge rather than a docking zone, because the overlay
+  can be dropped anywhere and the question still has to have an answer. A tie
+  goes to the horizontal edges, so a corner — including the shipped
+  bottom-right default — keeps the horizontal shape it has always had.
+- **Anchor** (`overlayAnchorFrom`): the midpoint of the window side that *faces*
+  that edge. That is the generalisation of the old bottom-centre rule and it
+  preserves its purpose — the bar sits still while the transcript card grows
+  away from the screen edge, never over it. For `bottom` it is byte-identical to
+  what the anchor always meant, so positions saved before edges existed keep
+  pointing at the same place.
+- **Sizes** (`overlaySize`): the bar, the resting handle and the folded chip all
+  transpose. The transcript **card does not** — turned on its side it would be a
+  ~120px column of running speech, about fifteen characters to a line. It keeps
+  its readable width and moves to sit *beside* the vertical bar instead of above
+  the horizontal one.
+- **Persistence**: `overlay.edge` in device config, its own key rather than a
+  field on `overlay.anchor` — widening the anchor's arktype schema would fail
+  validation against every value already stored and silently reset the spot the
+  user chose.
+- **Turning it**: `recordOverlayMove` recomputes the edge from where a real drag
+  dropped the window, and re-applies geometry once the drag settles, so the bar
+  flips orientation in place. The window manager overrides the edge the main
+  window read from settings with its own pending value, because a fresh drag has
+  not been written back yet — one authority, or the window gets sized for a
+  horizontal bar with a vertical one inside it.
+
+## Why the bar must never fail to appear
+
+Every window call in `window-manager.tauri.ts` is an IPC round trip that can
+reject. They used to run inside one function whose rejection the queue caught and
+logged, which meant a single transient failure in geometry abandoned the run
+**before** it ever showed the window — and if that view was the last of the
+burst, nothing retried. The dictation carried on working and the bar simply never
+appeared. That was a real user report.
+
+So: each step is individually contained (`attempt`), a geometry failure is
+cosmetic and never costs the show, and `settleVisibility` runs unconditionally at
+the end of every run — reading `latestView`, not the view its own run started
+with, so even a superseded or half-failed run leaves the window's visibility
+correct. It also re-issues `setAlwaysOnTop(true)` on the way up: Windows orders
+topmost windows among themselves by activation and the overlay never activates,
+so any other always-on-top window raised later in the session would otherwise sit
+above it permanently.
 
 ## Dev environment note
 

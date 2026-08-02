@@ -200,10 +200,12 @@
 					Move overlay back to the corner
 				</Button>
 				<Field.Description>
-					Drag the overlay by its handle, its pill, or the transcript above it to
+					Drag the overlay by its handle, its bar, or the transcript beside it to
 					put it anywhere on screen; it stays there, on this computer, until you
-					move it again. This puts it back in the bottom-right corner — useful if
-					you moved it onto a screen you no longer have.
+					move it again. It turns to lie along whichever screen edge you drop it
+					nearest — flat along the top and bottom, upright down the left and
+					right. This puts it back in the bottom-right corner, lying flat —
+					useful if you moved it onto a screen you no longer have.
 				</Field.Description>
 			</Field.Field>
 		{/if}

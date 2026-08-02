@@ -9,6 +9,7 @@
  */
 import { defineWindowEvent, defineWindowSignal } from '#platform/window-events';
 import type {
+	OverlayEdge,
 	RecordingPillAction,
 	RecordingPillStatus,
 } from '$lib/recording-pill/model';
@@ -31,6 +32,17 @@ export type RecordingOverlayView = {
 	status: RecordingPillStatus | null;
 	/** Rest as a small handle rather than disappearing between dictations. */
 	idleHandle: boolean;
+	/**
+	 * Which screen edge the overlay is docked against, so the pill can lay
+	 * itself out along it — horizontal on the top and bottom, vertical on the
+	 * left and right.
+	 *
+	 * It travels with the status rather than on its own channel because the
+	 * window is sized from the edge as well as the status, and geometry derived
+	 * from two events that can arrive out of order is a window that draws its
+	 * contents sideways inside the wrong rectangle for a frame.
+	 */
+	edge: OverlayEdge;
 };
 
 /** main -> overlay: what the overlay window should display. */

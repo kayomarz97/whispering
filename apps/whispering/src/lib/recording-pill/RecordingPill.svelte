@@ -4,6 +4,8 @@
 	import AudioLinesIcon from '@lucide/svelte/icons/audio-lines';
 	import CheckIcon from '@lucide/svelte/icons/check';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
+	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
+	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import ChevronUpIcon from '@lucide/svelte/icons/chevron-up';
 	import MicIcon from '@lucide/svelte/icons/mic';
 	import SquareIcon from '@lucide/svelte/icons/square';
@@ -13,7 +15,10 @@
 	import { DICTATION_FAILURE_LABEL } from '$lib/dictation-feedback';
 	import type { DeliveryReach } from '$lib/operations/delivery';
 	import LevelMeter from '$lib/recording-pill/LevelMeter.svelte';
-	import type { RecordingPillStatus } from '$lib/recording-pill/model';
+	import type {
+		OverlayEdge,
+		RecordingPillStatus,
+	} from '$lib/recording-pill/model';
 	import VadIndicator from '$lib/recording-pill/VadIndicator.svelte';
 
 	// The floating dictation pill, presentational and platform-free. It renders
@@ -32,6 +37,7 @@
 		onDragStart,
 		onStartCapture,
 		idleHandle = false,
+		edge = 'bottom',
 	}: {
 		/** What to display, or `null` when no dictation is in flight. */
 		status: RecordingPillStatus | null;
@@ -64,7 +70,69 @@
 		 * looking at.
 		 */
 		idleHandle?: boolean;
+		/**
+		 * The screen edge the pill is docked against. The bar lies parallel to it —
+		 * horizontal along the top and bottom, vertical down the left and right —
+		 * and the transcript card grows away from it, never over it. The web mount
+		 * is an element in a page with no edge, and keeps the default.
+		 */
+		edge?: OverlayEdge;
 	} = $props();
+
+	// ── Orientation ──────────────────────────────────────────────────────────
+	// One derived flag and four small class maps, rather than an `if` per element.
+	// The pill's structure is identical in both orientations; only the axis it
+	// runs along, the side the card stacks on, and the way the labels read
+	// change. Keeping that in maps is what stops the vertical layout drifting into
+	// a second copy of the component.
+
+	const vertical = $derived(edge === 'left' || edge === 'right');
+
+	/** Card first or bar first, so the bar always ends up against the edge. */
+	const STACK_CLASS = {
+		bottom: 'flex-col',
+		top: 'flex-col-reverse',
+		right: 'flex-row',
+		left: 'flex-row-reverse',
+	} satisfies Record<OverlayEdge, string>;
+
+	/** Which way the chevron points to bring the folded card back. */
+	const SHOW_CARD_ICON = {
+		bottom: ChevronUpIcon,
+		top: ChevronDownIcon,
+		right: ChevronLeftIcon,
+		left: ChevronRightIcon,
+	} satisfies Record<OverlayEdge, Component<{ class?: string }>>;
+
+	/** …and back toward the edge to fold it away again. */
+	const HIDE_CARD_ICON = {
+		bottom: ChevronDownIcon,
+		top: ChevronUpIcon,
+		right: ChevronRightIcon,
+		left: ChevronLeftIcon,
+	} satisfies Record<OverlayEdge, Component<{ class?: string }>>;
+
+	/** The resting handle hugs its edge rather than floating in the window. */
+	const HANDLE_CLASS = {
+		bottom: 'h-5 w-full items-end justify-center pb-[3px]',
+		top: 'h-5 w-full items-start justify-center pt-[3px]',
+		right: 'h-full w-5 items-center justify-end pr-[3px]',
+		left: 'h-full w-5 items-center justify-start pl-[3px]',
+	} satisfies Record<OverlayEdge, string>;
+
+	const ShowCardIcon = $derived(SHOW_CARD_ICON[edge]);
+	const HideCardIcon = $derived(HIDE_CARD_ICON[edge]);
+
+	// Text inside a vertical bar reads along the bar. `vertical-rl` is the
+	// standard rotation for Latin script in a vertical line: the characters turn
+	// a quarter turn clockwise and the line runs downward, which is how every
+	// vertical taskbar and side rail reads. Turning the bar but leaving the label
+	// horizontal would make it a 40px-wide box the label cannot fit in at all.
+	const labelClass = $derived(
+		vertical
+			? 'max-h-full min-h-0 truncate text-[13px] font-medium [writing-mode:vertical-rl]'
+			: 'min-w-0 truncate text-[13px] font-medium',
+	);
 
 	// Dragging the overlay and clicking it to reveal Whispering share one pointer,
 	// so they are separated by distance rather than by target. `startDragging`
@@ -76,12 +144,40 @@
 	// window manager does deliver one.
 	const DRAG_THRESHOLD_PX = 4;
 	let pressOrigin: { x: number; y: number } | null = null;
+	let capture: { element: Element; pointerId: number } | null = null;
 	let didDrag = $state(false);
+
+	// The press has to be followed outside the element, and the overlay window is
+	// barely bigger than the element: a vertical bar is 20px wide. A quick flick
+	// leaves the window between two pointer samples, and without capture those
+	// moves go to whatever window is now under the cursor — so the threshold is
+	// never crossed, `startDragging` is never called, and the bar simply refuses
+	// to move. Reproduced exactly that way on the 20px-wide vertical handle.
+	function capturePointer(event: PointerEvent) {
+		const element = event.currentTarget;
+		if (!(element instanceof Element)) return;
+		try {
+			element.setPointerCapture(event.pointerId);
+			capture = { element, pointerId: event.pointerId };
+		} catch {
+			// A pointer that has already been released or retargeted; the press is
+			// still tracked, it just cannot be followed off the element.
+		}
+	}
+
+	function releasePointer() {
+		if (!capture) return;
+		const { element, pointerId } = capture;
+		capture = null;
+		if (element.hasPointerCapture(pointerId))
+			element.releasePointerCapture(pointerId);
+	}
 
 	function onDragSurfacePointerDown(event: PointerEvent) {
 		if (!onDragStart || event.button !== 0) return;
 		pressOrigin = { x: event.clientX, y: event.clientY };
 		didDrag = false;
+		capturePointer(event);
 	}
 
 	function onDragSurfacePointerMove(event: PointerEvent) {
@@ -92,6 +188,7 @@
 		// button held, leaving it stuck to the cursor until the user clicks.
 		if (event.buttons === 0) {
 			pressOrigin = null;
+			releasePointer();
 			return;
 		}
 		const travelled = Math.hypot(
@@ -101,11 +198,16 @@
 		if (travelled < DRAG_THRESHOLD_PX) return;
 		didDrag = true;
 		pressOrigin = null;
+		// Hand the pointer back before the OS move loop takes it: from that call
+		// on this document receives no further pointer events at all, so a capture
+		// left held would never be released by a `pointerup` that never comes.
+		releasePointer();
 		onDragStart();
 	}
 
 	function onDragSurfacePointerUp() {
 		pressOrigin = null;
+		releasePointer();
 	}
 
 	/** Reveal, unless this press was really a drag. */
@@ -191,7 +293,7 @@
 	// this shared base, which carries the hover/press feedback: background and
 	// press-scale glide together at 150ms.
 	const actionBase =
-		'flex size-6 cursor-pointer items-center justify-center rounded-full bg-white/10 text-white/90 transition duration-150 ease-out hover:scale-[1.08] active:scale-95';
+		'flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full bg-white/10 text-white/90 transition duration-150 ease-out hover:scale-[1.08] active:scale-95';
 </script>
 
 <!-- The desktop pill lives in a non-focusable overlay window. Clicking its body
@@ -205,10 +307,14 @@
 	     so this is what a dictation starts from when the user has not memorised a
 	     shortcut — click it and it becomes the pill. It is a dark bar with a light
 	     ring rather than a plain white line because it has to stay legible over
-	     whatever happens to be behind it. -->
+	     whatever happens to be behind it. It lies along its edge, so a handle on
+	     the side of the screen is a vertical tick, not a stub poking inward. -->
 	<button
 		type="button"
-		class="group flex h-5 w-full cursor-pointer items-end justify-center bg-transparent pb-[3px] select-none"
+		class={cn(
+			'group flex cursor-pointer bg-transparent select-none',
+			HANDLE_CLASS[edge],
+		)}
 		aria-label="Start dictation"
 		title="Click to start dictation · drag to move"
 		onpointerdown={onDragSurfacePointerDown}
@@ -225,24 +331,35 @@
 		}}
 	>
 		<span
-			class="h-[6px] w-14 rounded-full bg-[#0f0f11]/85 ring-1 ring-white/30 transition-all duration-150 ease-out group-hover:w-20 group-hover:bg-[#0f0f11]/95 group-hover:ring-white/60"
+			class={cn(
+				'rounded-full bg-[#0f0f11]/85 ring-1 ring-white/30 transition-all duration-150 ease-out group-hover:bg-[#0f0f11]/95 group-hover:ring-white/60',
+				vertical
+					? 'h-14 w-[6px] group-hover:h-20'
+					: 'h-[6px] w-14 group-hover:w-20',
+			)}
 		></span>
 	</button>
 {:else if status}
-	<!-- Column wrapper: the live transcript (when present) stacks above the pill.
-	     With no transcript this collapses to just the pill, unchanged. -->
-	<div class="flex flex-col items-center gap-2">
+	<!-- Stack wrapper: the live transcript (when present) sits on the inward side
+	     of the bar, so it never grows over the screen edge the bar is docked to.
+	     With no transcript this collapses to just the bar, unchanged. -->
+	<div class={cn('flex items-center gap-2', STACK_CLASS[edge])}>
 		{#if recording && recording.trigger === 'vad' && recording.liveTranscript}
 			{#if recording.transcriptCollapsed}
 				{@const words = wordCount(recording.liveTranscript)}
-				<!-- Folded away: a chip barely taller than a line of text, so the
-				     desktop overlay window shrinks back to near the pill's own
+				<!-- Folded away: a chip barely thicker than a line of text, so the
+				     desktop overlay window shrinks back to near the bar's own
 				     footprint and stops covering (and swallowing clicks over) what is
 				     behind it. It still reports how much text is waiting, so folding
 				     never reads as "the transcript was lost". -->
 				<button
 					type="button"
-					class="flex h-6 items-center gap-1.5 rounded-full border border-white/10 bg-[#0f0f11]/80 px-2.5 text-[11px] font-medium text-white/70 backdrop-blur-md transition duration-150 select-none hover:text-white/95"
+					class={cn(
+						'flex items-center gap-1.5 rounded-full border border-white/10 bg-[#0f0f11]/80 text-[11px] font-medium text-white/70 backdrop-blur-md transition duration-150 select-none hover:text-white/95',
+						vertical
+							? 'w-6 flex-col px-0 py-2.5 [writing-mode:vertical-rl]'
+							: 'h-6 px-2.5',
+					)}
 					aria-label="Show live transcript"
 					title="Show live transcript"
 					onpointerdown={onDragSurfacePointerDown}
@@ -259,14 +376,21 @@
 						onToggleTranscript?.();
 					}}
 				>
-					<ChevronUpIcon class="size-3.5" />
+					<ShowCardIcon class="size-3.5 shrink-0" />
 					{words}
 					{words === 1 ? 'word' : 'words'}
 				</button>
 			{:else}
+				<!-- The card keeps its readable horizontal shape in both orientations.
+				     Turned on its side it would be a 120px column fitting about fifteen
+				     characters to a line, which is not a transcript anyone can read; so
+				     beside a vertical bar it simply sits alongside instead of above. -->
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
-					class="relative max-h-[96px] w-[340px] overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f11]/90 py-2.5 pr-9 pl-3.5 text-left text-[13px] leading-snug text-white/90 backdrop-blur-md select-none"
+					class={cn(
+						'relative w-[340px] overflow-hidden rounded-2xl border border-white/10 bg-[#0f0f11]/90 py-2.5 pr-9 pl-3.5 text-left text-[13px] leading-snug text-white/90 backdrop-blur-md select-none',
+						vertical ? 'max-h-[208px]' : 'max-h-[96px]',
+					)}
 					onpointerdown={onDragSurfacePointerDown}
 					onpointermove={onDragSurfacePointerMove}
 					onpointerup={onDragSurfacePointerUp}
@@ -288,25 +412,31 @@
 							onToggleTranscript?.();
 						}}
 					>
-						<ChevronDownIcon class="size-3.5" />
+						<HideCardIcon class="size-3.5" />
 					</button>
 				</div>
 			{/if}
 		{/if}
 	<div
 		class={cn(
-			// 40px-tall pill, shared look. gap-2.5 spaces the chip icon from its label;
+			// 40px-thick bar, shared look. gap-2.5 spaces the chip icon from its label;
 			// in recording it is only the floor (justify-between distributes wider). The
-			// width differs by phase (next arg).
-			'box-border flex h-10 items-center gap-2.5 rounded-full px-2.5 text-white/90 backdrop-blur-md select-none',
-			// Recording is a wider bar: the mic pins the left edge and stop the right,
-			// with the meter spread between them (justify-between). The text chips hug
-			// their content, capped wide enough for the longest label ("Transcription
-			// failed") to show in full. The 224px cap is mirrored by the desktop overlay
-			// window (OVERLAY_WIDTH in the Tauri runtime owner), which must stay in sync.
-			recording
-				? 'w-[208px] justify-between'
-				: 'w-fit max-w-[224px]',
+			// length differs by phase (next arg).
+			'box-border flex items-center gap-2.5 rounded-full text-white/90 backdrop-blur-md select-none',
+			vertical ? 'w-10 flex-col px-0 py-2.5' : 'h-10 px-2.5',
+			// Recording is a longer bar: the mic pins the leading edge and stop the
+			// trailing one, with the meter spread between them (justify-between). The
+			// text chips hug their content, capped long enough for the longest label
+			// ("Transcription failed") to show in full. The 224px cap is mirrored by
+			// the desktop overlay window (OVERLAY_WIDTH in the Tauri runtime owner),
+			// which must stay in sync — transposed on a vertical edge.
+			vertical
+				? recording
+					? 'h-[208px] justify-between'
+					: 'h-fit max-h-[224px]'
+				: recording
+					? 'w-[208px] justify-between'
+					: 'w-fit max-w-[224px]',
 			// Failed: a red chip so the failure reads at a glance, with the terse reason
 			// in the label. No action: detail and retry live on the recordings row.
 			chip?.tone === 'failed'
@@ -335,7 +465,7 @@
 			     stays a plain icon. -->
 			<div
 				class={cn(
-					'flex size-6 items-center justify-center rounded-full text-white/80',
+					'flex size-6 shrink-0 items-center justify-center rounded-full text-white/80',
 					onDragStart && 'cursor-grab active:cursor-grabbing hover:bg-white/10',
 				)}
 			>
@@ -350,19 +480,20 @@
 			     threshold, on top of the height already reacting to loudness. -->
 			<LevelMeter
 				{level}
-				class="h-5"
+				{vertical}
+				class={vertical ? 'w-5' : 'h-5'}
 				barClass={recording.trigger === 'vad' && recording.isSpeaking
 					? 'bg-[#ffe5ee]'
 					: undefined}
 			/>
 
-			<!-- Trailing cluster: a contextual slot, then stop as the constant right
+			<!-- Trailing cluster: a contextual slot, then stop as the constant final
 			     anchor. Manual and VAD share this skeleton (slot then stop), so the
 			     meter and the stop button land in the same place in both modes and only
 			     the slot's content differs. The slot is always the cancel button's
-			     width, so the cluster reads as balanced and the pill keeps a steady
-			     width as the slot's content changes. -->
-			<div class="flex items-center gap-1">
+			     size, so the cluster reads as balanced and the pill keeps a steady
+			     length as the slot's content changes. -->
+			<div class={cn('flex items-center gap-1', vertical && 'flex-col')}>
 				{#if recording.trigger === 'manual'}
 					<!-- Manual can discard the take, so the slot is the cancel button. -->
 					<button
@@ -370,6 +501,7 @@
 						class={cn(actionBase, 'hover:bg-[#faa2ca]/20 hover:text-[#ffd2e4]')}
 						aria-label="Cancel recording"
 						title="Cancel recording"
+						onpointerdown={(event) => event.stopPropagation()}
 						onclick={(event) => {
 							event.stopPropagation();
 							onCancel();
@@ -379,23 +511,24 @@
 					</button>
 				{:else}
 					<!-- VAD has no per-utterance cancel, so the slot holds the capture
-					     indicator at the cancel button's width, keeping the cluster
+					     indicator at the cancel button's size, keeping the cluster
 					     balanced. The dim-dot -> lit-dot -> spinner mark: the bars track
 					     raw level, this mark tracks whether VAD has latched onto speech
 					     (with its detection delay) and then the previous phrase's
 					     transcribe. -->
-					<div class="flex size-6 items-center justify-center">
+					<div class="flex size-6 shrink-0 items-center justify-center">
 						<VadIndicator signals={recording} />
 					</div>
 				{/if}
 
-				<!-- Stop: the primary action and the constant right anchor. A red chip so
+				<!-- Stop: the primary action and the constant final anchor. A red chip so
 				     it reads as "stop recording". -->
 				<button
 					type="button"
 					class={cn(actionBase, 'bg-red-500/60 text-white hover:bg-red-500/80')}
 					aria-label={stopLabel}
 					title={stopLabel}
+					onpointerdown={(event) => event.stopPropagation()}
 					onclick={(event) => {
 						event.stopPropagation();
 						onStop();
@@ -408,15 +541,16 @@
 			<!-- The Polish HUD holds the same spot as a chip: a spinner and "Polishing…"
 			     mask the ~1s AI pass, with a single ship-raw control to skip it and take
 			     the raw transcript now (ADR-0099). Unlike a chip, it carries an action. -->
-			<div class="flex items-center text-white/80">
+			<div class="flex shrink-0 items-center text-white/80">
 				<Spinner class="size-4 text-white/80" />
 			</div>
-			<span class="min-w-0 truncate text-[13px] font-medium">Polishing…</span>
+			<span class={labelClass}>Polishing…</span>
 			<button
 				type="button"
 				class={cn(actionBase, 'hover:bg-[#faa2ca]/20 hover:text-[#ffd2e4]')}
 				aria-label="Ship raw transcript now"
 				title="Ship raw transcript now"
+				onpointerdown={(event) => event.stopPropagation()}
 				onclick={(event) => {
 					event.stopPropagation();
 					onShipRaw();
@@ -431,7 +565,7 @@
 			{@const Icon = chip.Icon}
 			<div
 				class={cn(
-					'flex items-center',
+					'flex shrink-0 items-center',
 					// A clean delivery reads green; a reduced reach (clipboard/history)
 					// reads amber, "landed, but not where you asked" rather than a clean
 					// success; a failure reads red, paired with the red pill background.
@@ -440,11 +574,11 @@
 			>
 				<Icon class="size-4" />
 			</div>
-			<!-- The label takes only its text's width in the snug chip. Labels are
-			     closed, short tokens that fit the fixed-width pill; truncate's ellipsis
+			<!-- The label takes only its text's length in the snug chip. Labels are
+			     closed, short tokens that fit the fixed-size pill; truncate's ellipsis
 			     is a safety net, not load-bearing truncation. The full failure detail
 			     lives in the OS notification and the recordings row, never here. -->
-			<span class="min-w-0 truncate text-[13px] font-medium">{chip.label}</span>
+			<span class={labelClass}>{chip.label}</span>
 		{/if}
 	</div>
 	</div>

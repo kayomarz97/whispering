@@ -4,6 +4,7 @@ import { extractErrorMessage } from 'wellcrafted/error';
 import { os } from '#platform/os';
 import { BITRATES_KBPS, DEFAULT_BITRATE_KBPS } from '$lib/constants/audio';
 import { LOCAL_MODEL_UNLOAD_POLICIES } from '$lib/constants/local-model-unload-policy';
+import type { OverlayEdge } from '$lib/recording-pill/model';
 import { log, report } from '$lib/report';
 import type { KeyBinding } from '$lib/utils/key-binding';
 
@@ -178,6 +179,24 @@ const DEVICE_DEFINITIONS = {
 	'overlay.anchor': defineEntry(
 		type({ x: 'number', y: 'number' }).or('null'),
 		null as { x: number; y: number } | null,
+	),
+	/**
+	 * Which screen edge the overlay was dropped against, which decides whether
+	 * the bar lies horizontally or vertically and which way its transcript card
+	 * grows.
+	 *
+	 * Its own entry rather than a field on `overlay.anchor`, deliberately:
+	 * widening the anchor's schema would fail validation against every value
+	 * already stored and silently reset the spot the user chose. As a separate
+	 * key an existing anchor keeps working untouched, and `'bottom'` — the only
+	 * edge that existed before — is exactly what it used to mean.
+	 *
+	 * Device-bound for the same reason the anchor is: which edge is convenient
+	 * is a fact about this machine's screens.
+	 */
+	'overlay.edge': defineEntry(
+		type("'bottom' | 'top' | 'left' | 'right'"),
+		'bottom' as OverlayEdge,
 	),
 
 	// ── Global OS shortcuts (device-specific, never synced) ───────────

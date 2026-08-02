@@ -10,6 +10,7 @@ import {
 } from '$lib/recording-overlay/window-manager.tauri';
 import { dispatchPillAction } from '$lib/recording-pill/pill-actions';
 import { projectLifecycleToStatus } from '$lib/recording-pill/projection';
+import { deviceConfig } from '$lib/state/device-config.svelte';
 import { dictationLifecycle } from '$lib/state/dictation-lifecycle.svelte';
 import { liveTranscript } from '$lib/state/live-transcript.svelte';
 import { overlayTranscript } from '$lib/state/overlay-transcript.svelte';
@@ -32,6 +33,10 @@ function attachRecordingOverlay() {
 			collapsed: overlayTranscript.collapsed,
 		}),
 		idleHandle: settings.get('overlay.idleHandle'),
+		// Read here so a change of edge re-runs this effect; the window manager
+		// still has the last word on it, because a drag that has just turned the
+		// bar has not been written back to settings yet.
+		edge: deviceConfig.get('overlay.edge'),
 	});
 
 	$effect(() => {

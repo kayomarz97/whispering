@@ -41,6 +41,18 @@ export type RecordingPillStatus =
 	| { phase: 'failed'; tier: DictationFailureTier };
 
 /**
+ * The screen edge the pill is docked against, which decides which way round it
+ * lies: horizontal along the top and bottom, vertical down the left and right.
+ *
+ * Presentation vocabulary rather than window geometry, so the pill can lay
+ * itself out from it without importing anything platform-shaped. The web mount
+ * is an element in a page with no edge to dock to and always passes `'bottom'`;
+ * only the desktop overlay, which is a window the user drags around the screen,
+ * ever sends anything else.
+ */
+export type OverlayEdge = 'bottom' | 'top' | 'left' | 'right';
+
+/**
  * A control gesture emitted by either mount of the shared recording pill.
  *
  * `toggle-transcript` folds the live transcript card away (or brings it back).

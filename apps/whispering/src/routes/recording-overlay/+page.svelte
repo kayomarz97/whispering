@@ -12,7 +12,10 @@
 	} from '$lib/recording-overlay/events';
 	import type { RecordingOverlayView } from '$lib/recording-overlay/events';
 	import { foldMicLevel } from '$lib/recording-pill/level';
-	import type { RecordingPillAction } from '$lib/recording-pill/model';
+	import type {
+		OverlayEdge,
+		RecordingPillAction,
+	} from '$lib/recording-pill/model';
 	import RecordingPill from '$lib/recording-pill/RecordingPill.svelte';
 
 	// Tauri adapter for the recording pill. The overlay lives in its own webview,
@@ -24,7 +27,22 @@
 	// The window is created hidden, so `idleHandle: true` here only decides what
 	// is drawn if the window is somehow shown before the first view lands — the
 	// main window is the authority and sends its own value immediately.
-	let view = $state<RecordingOverlayView>({ status: null, idleHandle: true });
+	let view = $state<RecordingOverlayView>({
+		status: null,
+		idleHandle: true,
+		edge: 'bottom',
+	});
+
+	// The window is anchored on the edge the bar is docked to, and the bar hugs
+	// that edge inside it, so the transcript card grows inward and the bar itself
+	// never moves as the window resizes around it. Bottom-anchored was the only
+	// case before edges existed; the other three are the same rule.
+	const ALIGNMENT_CLASS = {
+		bottom: 'items-end justify-center',
+		top: 'items-start justify-center',
+		right: 'items-center justify-end',
+		left: 'items-center justify-start',
+	} satisfies Record<OverlayEdge, string>;
 
 	// Live, smoothed mic loudness, 0 (silent) to 1 (loud). Driven by the
 	// `mic-level` event: VAD frames in JS for voice-activated capture, the Rust
@@ -134,14 +152,15 @@
      web host centers its own copy). A fixed full-window flex box positions the
      chip regardless of how the layout nests the route.
 
-     Bottom-anchored, not centered: the window grows upward from the same
-     bottom-right corner when a live transcript card stacks above the pill, so
-     anchoring to the bottom edge keeps the pill itself pinned in place on screen
-     instead of jumping half the card's height every time text arrives. -->
-<div class="fixed inset-0 flex items-end justify-center">
+     Edge-anchored, not centered: the window grows away from the screen edge the
+     bar is docked to when a live transcript card stacks beside it, so pinning
+     the bar to that edge keeps it sitting still on screen instead of jumping
+     half the card's size every time text arrives. -->
+<div class={`fixed inset-0 flex ${ALIGNMENT_CLASS[view.edge]}`}>
 	<RecordingPill
 		status={view.status}
 		idleHandle={view.idleHandle}
+		edge={view.edge}
 		{level}
 		onStop={() => sendAction('stop')}
 		onCancel={() => sendAction('cancel')}
