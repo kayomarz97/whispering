@@ -56,8 +56,49 @@ test('a bare key with no modifier is refused', () => {
 });
 
 test('a superset of a reserved chord is allowed (exact-set matching)', () => {
-	// Ctrl+Win+Space is not the literal meta+space Spotlight chord.
+	// Ctrl+Shift+F is not the literal Ctrl+F "Find" chord.
 	expect(
-		validateGlobalBinding({ modifiers: ['ctrl', 'meta'], keys: ['space'] }),
+		validateGlobalBinding({ modifiers: ['ctrl', 'shift'], keys: ['keyF'] }),
 	).toBeNull();
+});
+
+// Windows claims a swathe of chords before any application sees them, and
+// `RegisterHotKey` then refuses them. Registration is replace-all with rollback,
+// so one of these does not merely fail to bind — it fails the whole batch and
+// leaves every other gesture unchanged, which reads as "the app is broken".
+// These are refused at record time instead, naming what owns them. Each was
+// confirmed against `RegisterHotKey` on Windows 11.
+test('chords the Windows shell owns are refused by name', () => {
+	const cases: [Parameters<typeof validateGlobalBinding>[0], string][] = [
+		[{ modifiers: ['ctrl', 'meta'], keys: ['keyD'] }, 'virtual desktop'],
+		[{ modifiers: ['ctrl', 'meta'], keys: ['space'] }, 'input method'],
+		[{ modifiers: ['ctrl', 'meta'], keys: ['leftArrow'] }, 'virtual desktop'],
+		[{ modifiers: ['ctrl', 'meta'], keys: ['f4'] }, 'virtual desktop'],
+		[{ modifiers: ['meta'], keys: ['keyL'] }, 'Lock'],
+		[{ modifiers: ['ctrl', 'shift'], keys: ['escape'] }, 'Task Manager'],
+	];
+	for (const [binding, expected] of cases) {
+		expect(validateGlobalBinding(binding)).toContain(expected);
+	}
+});
+
+test('the Ctrl+Win chords Windows leaves free stay bindable', () => {
+	// Probed as available on Windows 11 while the ones above were taken; the
+	// table must refuse what the OS owns without refusing the whole family.
+	for (const key of ['keyX', 'keyZ', 'keyJ', 'keyK']) {
+		expect(
+			validateGlobalBinding({ modifiers: ['ctrl', 'meta'], keys: [key] }),
+		).toBeNull();
+	}
+});
+
+test('a plain Ctrl chord on a letter no app shortcut owns is allowed', () => {
+	// The whole point of the policy: refuse what would be regretted (Ctrl+C,
+	// Ctrl+S, Ctrl+Z) without blocking the letters left over for a dictation
+	// gesture.
+	for (const key of ['keyD', 'keyE', 'keyG', 'keyH', 'keyJ', 'keyK', 'keyM']) {
+		expect(
+			validateGlobalBinding({ modifiers: ['ctrl'], keys: [key] }),
+		).toBeNull();
+	}
 });

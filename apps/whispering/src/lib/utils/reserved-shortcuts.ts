@@ -35,8 +35,8 @@ type ReservedChord = {
 /**
  * Common chords a global gesture must not shadow. Matched as exact set equality
  * (after expanding `primary`), so a precise combo is blocked while a superset
- * the user deliberately built (for example the Windows toggle Ctrl+Win+Space) is
- * not. Keys are physical-position names from the `Key` vocabulary.
+ * the user deliberately built (Ctrl+Shift+R when only Ctrl+R is listed) is not.
+ * Keys are physical-position names from the `Key` vocabulary.
  */
 const RESERVED_CHORDS: ReservedChord[] = [
 	// Reload
@@ -65,14 +65,62 @@ const RESERVED_CHORDS: ReservedChord[] = [
 	// Application / window switching
 	{ modifiers: ['primary'], keys: ['tab'], label: 'Switch application' },
 	{ modifiers: ['alt'], keys: ['tab'], label: 'Switch window' },
-	// System search (macOS Spotlight / input source). Literal `meta`, so the
-	// Windows Ctrl+Win+Space toggle (a different set) stays allowed.
+	// System search (macOS Spotlight / input source). Literal `meta`; the
+	// Windows Ctrl+Win+Space combination is a different set and is listed
+	// separately below, where it is also refused.
 	{ modifiers: ['meta'], keys: ['space'], label: 'System search' },
 	// Screenshots
 	{ modifiers: ['primary', 'shift'], keys: ['num3'], label: 'Screenshot' },
 	{ modifiers: ['primary', 'shift'], keys: ['num4'], label: 'Screenshot' },
 	{ modifiers: ['primary', 'shift'], keys: ['num5'], label: 'Screenshot' },
 	{ modifiers: ['meta', 'shift'], keys: ['keyS'], label: 'Screenshot' },
+
+	// ── Chords the Windows shell owns ────────────────────────────────────────
+	// Windows claims these before any application sees them, so `RegisterHotKey`
+	// refuses them outright ("HotKey already registered"). Registration is
+	// replace-all with rollback, so one of these does not just fail to bind — it
+	// fails the whole batch and leaves every other gesture as it was, which
+	// reads to the user as "the app is broken" rather than "that key is taken".
+	// Refusing them here turns that into a sentence naming the culprit, at the
+	// moment the chord is recorded.
+	//
+	// Verified by probing `RegisterHotKey` on Windows 11: Ctrl+Win+D, Space, V,
+	// Left and F4 all came back already-registered, while Ctrl+Win+X/Z/J/K were
+	// free. This list is the observed set plus the shell gestures Microsoft
+	// documents; it cannot be exhaustive, which is why a registration failure
+	// still has to explain itself at runtime.
+	{ modifiers: ['ctrl', 'meta'], keys: ['keyD'], label: 'New virtual desktop' },
+	{
+		modifiers: ['ctrl', 'meta'],
+		keys: ['f4'],
+		label: 'Close virtual desktop',
+	},
+	{
+		modifiers: ['ctrl', 'meta'],
+		keys: ['leftArrow'],
+		label: 'Switch virtual desktop',
+	},
+	{
+		modifiers: ['ctrl', 'meta'],
+		keys: ['rightArrow'],
+		label: 'Switch virtual desktop',
+	},
+	{
+		modifiers: ['ctrl', 'meta'],
+		keys: ['space'],
+		label: 'Switch input method',
+	},
+	{ modifiers: ['ctrl', 'meta'], keys: ['keyV'], label: 'Reserved by Windows' },
+	{ modifiers: ['meta'], keys: ['keyL'], label: 'Lock the computer' },
+	{ modifiers: ['meta'], keys: ['keyD'], label: 'Show the desktop' },
+	{ modifiers: ['meta'], keys: ['keyE'], label: 'File Explorer' },
+	{ modifiers: ['meta'], keys: ['keyR'], label: 'Run' },
+	{ modifiers: ['meta'], keys: ['keyS'], label: 'Windows Search' },
+	{ modifiers: ['meta'], keys: ['keyI'], label: 'Windows Settings' },
+	{ modifiers: ['meta'], keys: ['keyA'], label: 'Quick Settings' },
+	{ modifiers: ['meta'], keys: ['keyX'], label: 'Quick Link menu' },
+	{ modifiers: ['meta'], keys: ['tab'], label: 'Task view' },
+	{ modifiers: ['ctrl', 'shift'], keys: ['escape'], label: 'Task Manager' },
 ];
 
 function sameSet(a: readonly string[], b: readonly string[]): boolean {

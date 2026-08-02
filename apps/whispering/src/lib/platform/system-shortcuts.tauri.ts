@@ -31,6 +31,39 @@ import type { Shortcuts } from './types';
 const globalKey = (id: Command['id']) => `shortcuts.global.${id}` as const;
 
 /**
+ * Turn a registration failure into a sentence that names the offending chord.
+ *
+ * Rust prefixes the accelerator it was registering (`Control+Super+KeyD: ...`)
+ * because registration is replace-all: one refusal fails the batch, so without
+ * it the user is told only that "registering shortcuts" failed and has no way to
+ * know which key to change. The plugin's own text then spells the chord as a
+ * Rust debug struct — `HotKey { mods: Modifiers(CONTROL | SUPER), key: KeyD,
+ * id: 537395222 }` — which no one should be asked to read, so it is replaced
+ * rather than appended.
+ */
+function explainRegistrationFailure(raw: string): string {
+	const [accelerator, ...rest] = raw.split(': ');
+	const detail = rest.join(': ');
+	if (!accelerator || !detail) return raw;
+
+	const chord = accelerator
+		.split('+')
+		.map((token) =>
+			token === 'Control'
+				? 'Ctrl'
+				: token === 'Super'
+					? 'Win'
+					: token.replace(/^(Key|Digit)/, ''),
+		)
+		.join(' + ');
+
+	if (/already registered/i.test(detail)) {
+		return `${chord} is already taken by Windows or another app, so it cannot be used here. Your other shortcuts are unchanged — pick a different combination.`;
+	}
+	return `${chord} could not be registered: ${detail}`;
+}
+
+/**
  * Device-config validates `keys` structurally as `string[]`, so this read is the
  * boundary that narrows the stored value to `KeyBinding`. The registrability
  * check below rejects any key string the plugin vocabulary cannot spell.
@@ -73,8 +106,9 @@ export const systemShortcuts: Shortcuts | null = createShortcuts({
 			if (accelerator === null) continue;
 			chords.push({ commandId: entry.command.id, accelerator });
 		}
-		// A plugin registration the OS rejects (a chord another app holds) fails
-		// the whole replace-all; surface it instead of partially binding.
+		// A plugin registration the OS rejects (a chord Windows or another app
+		// already holds) fails the whole replace-all; surface it instead of
+		// partially binding.
 		const { error } = await tryAsync({
 			try: async () => {
 				await tauriOnly.keyboard.registerChords(chords);
@@ -82,7 +116,7 @@ export const systemShortcuts: Shortcuts | null = createShortcuts({
 			catch: (cause) =>
 				Err({
 					name: 'GlobalShortcutRegistrationFailed',
-					message: extractErrorMessage(cause),
+					message: explainRegistrationFailure(extractErrorMessage(cause)),
 				}),
 		});
 		return error ?? null;

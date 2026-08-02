@@ -286,7 +286,15 @@ fn register_all(
                 }
                 .emit_to(app, WHISPERING_WINDOW);
             })
-            .map_err(|error| error.to_string())?;
+            // Name the chord that failed. Registration is replace-all, so one
+            // refusal fails the batch and rolls everything back; without the
+            // accelerator in the message the user is told only that "registering
+            // shortcuts" failed, with no way to tell which key to change. The
+            // plugin's own error spells the chord as a Rust debug struct
+            // (`HotKey { mods: Modifiers(CONTROL | SUPER), key: KeyD, .. }`),
+            // which is worse than useless to read, so the caller reformats from
+            // this accelerator instead.
+            .map_err(|error| format!("{}: {error}", registration.accelerator))?;
     }
     Ok(())
 }
