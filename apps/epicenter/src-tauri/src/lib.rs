@@ -910,12 +910,25 @@ fn ensure_surface(
     #[cfg(windows)]
     grant_webview_media_permissions(&window);
 
-    let close_window = window.clone();
-    window.on_window_event(move |event| {
-        if let WindowEvent::CloseRequested { api, .. } = event {
+    // Both ways of dismissing the window send it to the tray, so it never holds a
+    // taskbar button while it is away. Closing is the obvious one; minimizing
+    // matters just as much, because a minimized window keeps `WS_EX_APPWINDOW`
+    // and its taskbar button — which is exactly the space the user asked us not
+    // to take. Unminimize before hiding: a window that is hidden *and* minimized
+    // comes back minimized, so the tray icon would appear to do nothing.
+    let event_window = window.clone();
+    window.on_window_event(move |event| match event {
+        WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
-            let _ = close_window.hide();
+            let _ = event_window.hide();
         }
+        WindowEvent::Resized(_) => {
+            if event_window.is_minimized().unwrap_or(false) {
+                let _ = event_window.unminimize();
+                let _ = event_window.hide();
+            }
+        }
+        _ => {}
     });
     if reveal {
         focus(window);

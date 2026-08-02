@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tauri::image::Image;
 use tauri::menu::MenuBuilder;
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Wry};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState as NativeShortcutState};
@@ -50,13 +50,149 @@ pub fn create_tray(app: &DesktopAppHandle) -> tauri::Result<()> {
         .icon(icon)
         .tooltip("Whispering")
         .menu(&menu)
+        // The tray icon is the app's only permanent surface once the window goes
+        // away on both close and minimize, so the cheap gesture — a left click —
+        // opens Whispering, and the menu stays on right click. With the default
+        // (menu on left click) every trip back to the window costs two clicks.
+        .show_menu_on_left_click(false)
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                request_surface(tray.app_handle(), Surface::Whispering);
+            }
+        })
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show-whispering" => request_surface(app, Surface::Whispering),
             "quit" => app.exit(0),
             _ => {}
         })
         .build(app)?;
+
+    #[cfg(windows)]
+    promote_tray_icon_once(app);
+
     Ok(())
+}
+
+/// Ask Windows 11 to keep our tray icon beside the clock instead of filing it in
+/// the overflow flyout.
+///
+/// Windows 11 hides every newly registered notification icon behind the `^`
+/// chevron and offers no API to opt out — the only switch is
+/// Settings → Personalization → Taskbar → "Other system tray icons", which writes
+/// `IsPromoted` under `HKCU\Control Panel\NotifyIconSettings\<hash>`. Explorer
+/// reads that value live, so writing it moves the icon out immediately.
+///
+/// This app earns the exception: with the window going to the tray on both close
+/// and minimize, an icon the user cannot see is an app with no visible surface at
+/// all. It is still their preference, so this runs **once ever** — a marker file
+/// records that we have asked, and anyone who afterwards drags the icon back into
+/// the overflow keeps it there.
+#[cfg(windows)]
+fn promote_tray_icon_once(app: &DesktopAppHandle) {
+    use tauri::Manager;
+
+    let Ok(marker) = app
+        .path()
+        .app_config_dir()
+        .map(|dir| dir.join("tray-icon-promoted"))
+    else {
+        return;
+    };
+    if marker.exists() {
+        return;
+    }
+
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+
+    // The registry record is created by Explorer when the icon is first
+    // published, which on a fresh install happens moments after this call. Poll
+    // briefly rather than give up on the launch that mattered most.
+    tauri::async_runtime::spawn(async move {
+        for _ in 0..20 {
+            match promote_notify_icon(&exe) {
+                Ok(true) => {
+                    if let Some(parent) = marker.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    if let Err(error) = std::fs::write(&marker, b"1") {
+                        log::warn!("record the tray icon promotion: {error}");
+                    }
+                    return;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    log::warn!("promote the Whispering tray icon: {error}");
+                    return;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+        log::warn!("the Whispering tray icon never appeared in NotifyIconSettings");
+    });
+}
+
+/// Set `IsPromoted` on every notification-icon record belonging to `exe`.
+/// `Ok(false)` means no record exists yet, which is the expected answer in the
+/// seconds before Explorer publishes the icon on a fresh install.
+#[cfg(windows)]
+fn promote_notify_icon(exe: &std::path::Path) -> std::io::Result<bool> {
+    use winreg::enums::{HKEY_CURRENT_USER, KEY_READ, KEY_SET_VALUE};
+    use winreg::RegKey;
+
+    const SETTINGS: &str = r"Control Panel\NotifyIconSettings";
+
+    let root = RegKey::predef(HKEY_CURRENT_USER).open_subkey(SETTINGS)?;
+    let mut promoted = false;
+    for name in root.enum_keys().filter_map(Result::ok) {
+        let Ok(entry) = root.open_subkey_with_flags(&name, KEY_READ | KEY_SET_VALUE) else {
+            continue;
+        };
+        let Ok(recorded) = entry.get_value::<String, _>("ExecutablePath") else {
+            continue;
+        };
+        if !is_same_executable(&recorded, exe) {
+            continue;
+        }
+        entry.set_value("IsPromoted", &1u32)?;
+        promoted = true;
+    }
+    Ok(promoted)
+}
+
+/// Whether a recorded `ExecutablePath` names our executable.
+///
+/// Compared case-insensitively, and by the trailing directory plus file name as
+/// well as the whole path: Explorer rewrites paths under a known folder as a
+/// GUID (`{6D809377-…}\App\app.exe` for Program Files), so a full-path match
+/// alone would silently never fire for a machine-wide install.
+#[cfg(windows)]
+fn is_same_executable(recorded: &str, exe: &std::path::Path) -> bool {
+    fn tail(path: &str) -> Option<String> {
+        let parts: Vec<&str> = path
+            .rsplit(['\\', '/'])
+            .take(2)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        (parts.len() == 2).then(|| parts.join("\\").to_ascii_lowercase())
+    }
+
+    let exe = exe.to_string_lossy();
+    if recorded.eq_ignore_ascii_case(&exe) {
+        return true;
+    }
+    match (tail(recorded), tail(&exe)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
 }
 
 pub fn set_tray_recording_state(app: &AppHandle, recording: bool) {
@@ -183,6 +319,35 @@ mod tests {
             command_id: command_id.into(),
             accelerator: accelerator.into(),
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tray_icon_records_are_matched_through_known_folder_guids() {
+        use std::path::Path;
+
+        let exe = Path::new(r"C:\Users\me\AppData\Local\Whispering\epicenter.exe");
+        // The plain path Explorer records for a per-user install, any casing.
+        assert!(is_same_executable(
+            r"c:\users\me\appdata\local\whispering\epicenter.exe",
+            exe
+        ));
+        // A machine-wide install is recorded under a known-folder GUID, so a
+        // whole-path comparison would never match and the icon would stay in the
+        // overflow forever.
+        assert!(is_same_executable(
+            r"{6D809377-6AF0-444B-8957-A3773F02200E}\Whispering\epicenter.exe",
+            exe
+        ));
+        // Another app's icon must never be promoted on our behalf.
+        assert!(!is_same_executable(
+            r"C:\Users\me\AppData\Local\Other\epicenter.exe",
+            exe
+        ));
+        assert!(!is_same_executable(
+            r"C:\Users\me\AppData\Local\Whispering\other.exe",
+            exe
+        ));
     }
 
     #[test]
