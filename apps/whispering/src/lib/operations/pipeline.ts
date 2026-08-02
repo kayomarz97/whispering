@@ -17,6 +17,17 @@ import { overlayTranscript } from '$lib/state/overlay-transcript.svelte';
 import { polishHud } from '$lib/state/polish-hud.svelte';
 import { recordings } from '$lib/state/recordings.svelte';
 import { settings } from '$lib/state/settings.svelte';
+import { vadRecorder } from '$lib/state/vad-recorder.svelte';
+
+/**
+ * Whether a voice-activated session is still listening right now.
+ *
+ * Read straight off the recorder state module rather than through
+ * `operations/recording`, which imports this file: the state module imports no
+ * operations, so this direction has no cycle.
+ */
+const isVadSessionLive = (): boolean =>
+	vadRecorder.state === 'LISTENING' || vadRecorder.state === 'SPEECH_DETECTED';
 
 /**
  * Argument shape for the pipeline. The recorder produces a
@@ -190,7 +201,16 @@ export async function processRecordingPipeline({
 
 	// The transcript is "ready" once it is polished and about to be delivered, so
 	// the completion sound and the resolved loading notice both fire here.
-	sound.playSoundIfEnabled('transcriptionComplete');
+	//
+	// …except while a voice-activated session is still listening. Every pause
+	// ends a phrase, so this would chime once per pause, over the top of someone
+	// still mid-sentence — reported as "the ting-tong noise while I'm talking is
+	// very distracting, I get confused about what's happening". The sound means
+	// "your words have landed", which is only true once the session is over. The
+	// phrase that finishes *after* listening stops still gets it, because by then
+	// the recorder is idle and it means exactly that. Manual dictation is one
+	// phrase per session and is unaffected.
+	if (!isVadSessionLive()) sound.playSoundIfEnabled('transcriptionComplete');
 	const { outcome: transcriptDelivery, notice: transcribeNotice } =
 		await deliverTranscriptionResult({
 			text: deliveredText,

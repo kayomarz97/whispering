@@ -99,7 +99,13 @@ const sound = {
 	'sound.manualStop': defineKv(field.boolean(), () => true),
 	'sound.manualCancel': defineKv(field.boolean(), () => true),
 	'sound.vadStart': defineKv(field.boolean(), () => true),
-	'sound.vadCapture': defineKv(field.boolean(), () => true),
+	// Off by default. This one fires at every pause — repeatedly, while the user
+	// is still speaking — and paired with the completion chime it produced the
+	// "ting-tong noise while I'm talking" that made a live session impossible to
+	// follow. The session's own start and stop sounds already mark the boundaries
+	// that matter. Kept as a toggle for anyone who does want a per-phrase
+	// acknowledgement.
+	'sound.vadCapture': defineKv(field.boolean(), () => false),
 	'sound.vadStop': defineKv(field.boolean(), () => true),
 	'sound.transcriptionComplete': defineKv(field.boolean(), () => true),
 	'sound.recipeComplete': defineKv(field.boolean(), () => true),
