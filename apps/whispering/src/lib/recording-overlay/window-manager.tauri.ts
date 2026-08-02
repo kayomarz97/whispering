@@ -17,8 +17,10 @@ import {
 } from '$lib/recording-overlay/events';
 import {
 	anchorProbePoint,
+	edgeForRect,
 	type MonitorBounds,
 	monitorContains,
+	type OverlayEdge,
 	type OverlaySize,
 	overlayAnchorFrom,
 	overlayIsVisible,
@@ -26,6 +28,7 @@ import {
 	overlaySize,
 	type Point,
 	physicalSizeOn,
+	type Rect,
 } from '$lib/recording-overlay/geometry';
 import { deviceConfig } from '$lib/state/device-config.svelte';
 
@@ -52,7 +55,11 @@ const DRAG_DEFER_MS = 2_000;
 // as the recorder; the last write is the only one that matters.
 const ANCHOR_WRITE_DEBOUNCE_MS = 250;
 
-let latestView: RecordingOverlayView = { status: null, idleHandle: false };
+let latestView: RecordingOverlayView = {
+	status: null,
+	idleHandle: false,
+	edge: 'bottom',
+};
 let queue: Promise<void> = Promise.resolve();
 
 /** Where we believe the window is now, in physical pixels. */
@@ -85,6 +92,35 @@ const boundsOf = (monitor: Monitor): MonitorBounds => ({
 	scaleFactor: monitor.scaleFactor,
 });
 
+// ── Failure containment ──────────────────────────────────────────────────────
+// Every window call below is a Tauri IPC round trip that can reject. They used
+// to run bare inside one `try`-less async function whose rejection was caught by
+// the queue and logged — which meant a single transient failure anywhere in
+// geometry abandoned the run BEFORE it ever showed the window, and if that view
+// was the last of the burst nothing retried. The dictation carried on working
+// and the bar simply never appeared, silently, for the rest of it. That is the
+// "sometimes I speak and no bar comes up" report.
+//
+// So each step is contained: a failure is logged with the step that failed and
+// the run continues to the visibility step, which is the one that must not be
+// skipped. A bar in the wrong place beats no bar at all.
+
+async function attempt<T>(
+	step: string,
+	run: () => Promise<T>,
+): Promise<T | null> {
+	try {
+		return await run();
+	} catch (error) {
+		log.warn(
+			new Error(`recording overlay: ${step} failed`, {
+				cause: error instanceof Error ? error : new Error(String(error)),
+			}),
+		);
+		return null;
+	}
+}
+
 // ── Drag deferral ────────────────────────────────────────────────────────────
 // While the user drags, the OS move loop owns the window. Resizing or moving it
 // then yanks it out from under the cursor — and a live VAD session will try to,
@@ -108,24 +144,32 @@ function noteDragInFlight(): void {
 	}, DRAG_DEFER_MS);
 }
 
-// ── Anchor persistence ───────────────────────────────────────────────────────
+// ── Anchor and edge persistence ──────────────────────────────────────────────
 
 let anchorWriteTimer: ReturnType<typeof setTimeout> | undefined;
 let pendingAnchor: Point | null = null;
+let pendingEdge: OverlayEdge | null = null;
 
-function persistAnchorSoon(anchor: Point): void {
+function persistPlacementSoon(anchor: Point, edge: OverlayEdge): void {
 	pendingAnchor = anchor;
+	pendingEdge = edge;
 	if (anchorWriteTimer !== undefined) return;
 	anchorWriteTimer = setTimeout(() => {
 		anchorWriteTimer = undefined;
 		if (pendingAnchor) deviceConfig.set('overlay.anchor', pendingAnchor);
+		if (pendingEdge) deviceConfig.set('overlay.edge', pendingEdge);
 		pendingAnchor = null;
+		pendingEdge = null;
 	}, ANCHOR_WRITE_DEBOUNCE_MS);
 }
 
 /** The anchor including a write that has not been flushed yet. */
 const effectiveAnchor = (): Point | null =>
 	pendingAnchor ?? deviceConfig.get('overlay.anchor');
+
+/** The docked edge including a write that has not been flushed yet. */
+const effectiveEdge = (): OverlayEdge =>
+	pendingEdge ?? deviceConfig.get('overlay.edge');
 
 // ── Placement ────────────────────────────────────────────────────────────────
 
@@ -138,33 +182,47 @@ const effectiveAnchor = (): Point | null =>
  * the primary monitor's bounds would quietly haul the overlay back to screen
  * one on every launch.
  */
-async function monitorForAnchor(anchor: Point): Promise<Monitor | null> {
-	const monitors = await availableMonitors().catch(() => [] as Monitor[]);
-	const probe = anchorProbePoint(anchor);
-	const containing = monitors.find((monitor) =>
-		monitorContains(boundsOf(monitor), probe),
+async function monitorForAnchor(
+	anchor: Point,
+	edge: OverlayEdge,
+): Promise<MonitorBounds | null> {
+	const probe = anchorProbePoint(anchor, edge);
+	const containing = knownMonitors.find((monitor) =>
+		monitorContains(monitor, probe),
 	);
+	if (containing) return containing;
 	// The anchor's monitor is gone (unplugged, or resized under it): fall through
 	// to wherever the overlay currently is and let the clamp pull it on-screen.
-	return containing ?? (await currentMonitor()) ?? (await primaryMonitor());
+	const fallback = (await currentMonitor()) ?? (await primaryMonitor());
+	return fallback ? boundsOf(fallback) : null;
+}
+
+/** Where an overlay that has never been dragged should live. */
+async function monitorForNewOverlay(): Promise<MonitorBounds | null> {
+	const monitor = (await currentMonitor()) ?? (await primaryMonitor());
+	return monitor ? boundsOf(monitor) : (knownMonitors[0] ?? null);
 }
 
 type Placement = { physicalSize: OverlaySize; position: Point };
 
 async function computePlacement(size: OverlaySize): Promise<Placement | null> {
-	const anchor = effectiveAnchor();
-	const monitor = anchor
-		? await monitorForAnchor(anchor)
-		: ((await currentMonitor()) ?? (await primaryMonitor()));
-	if (!monitor) return null;
+	// One monitor enumeration per placement, cached for the synchronous edge test
+	// a drag needs. Refreshing here is what keeps that cache from going stale
+	// across a display being plugged in or rearranged.
+	await refreshKnownMonitors();
 
-	const bounds = boundsOf(monitor);
+	const anchor = effectiveAnchor();
+	const edge = effectiveEdge();
+	const bounds = anchor
+		? await monitorForAnchor(anchor, edge)
+		: await monitorForNewOverlay();
+	if (!bounds) return null;
 	return {
 		// Both derived from the same monitor, so one scale factor governs the size
 		// and the position. Sizing logically and placing physically puts them out
 		// of step on a mixed-DPI desktop.
 		physicalSize: physicalSizeOn(bounds, size),
-		position: overlayPosition({ anchor, monitor: bounds, size }),
+		position: overlayPosition({ anchor, edge, monitor: bounds, size }),
 	};
 }
 
@@ -181,7 +239,9 @@ async function applyGeometry(
 		return;
 	}
 
-	const placement = await computePlacement(size);
+	const placement = await attempt('compute placement', () =>
+		computePlacement(size),
+	);
 	if (!placement) return;
 
 	if (
@@ -189,54 +249,131 @@ async function applyGeometry(
 		lastAppliedPhysicalSize.width !== placement.physicalSize.width ||
 		lastAppliedPhysicalSize.height !== placement.physicalSize.height
 	) {
-		await overlay.setSize(
-			new PhysicalSize(
-				placement.physicalSize.width,
-				placement.physicalSize.height,
+		const applied = await attempt('resize', () =>
+			overlay.setSize(
+				new PhysicalSize(
+					placement.physicalSize.width,
+					placement.physicalSize.height,
+				),
 			),
 		);
-		lastAppliedPhysicalSize = placement.physicalSize;
+		// Only record it once the window agreed, or a failed resize would be
+		// remembered as applied and never retried.
+		if (applied !== null) lastAppliedPhysicalSize = placement.physicalSize;
 	}
 	lastAppliedSize = size;
 
 	if (!currentPosition || !samePoint(currentPosition, placement.position)) {
 		rememberCommanded(placement.position);
-		await overlay.setPosition(
-			new PhysicalPosition(placement.position.x, placement.position.y),
+		await attempt('reposition', () =>
+			overlay.setPosition(
+				new PhysicalPosition(placement.position.x, placement.position.y),
+			),
 		);
 	}
 }
 
 /**
- * Record where the overlay moved to.
+ * Bring the window's visibility into line with the LATEST view, and put it back
+ * on top of the topmost band while doing it.
+ *
+ * Deliberately reads `latestView` rather than the view its run started with, and
+ * deliberately runs even when that run was superseded or partly failed: this is
+ * the step whose omission the user sees. Everything above it is cosmetic by
+ * comparison.
+ *
+ * The always-on-top re-assertion matters because Windows orders topmost windows
+ * among themselves by activation, and the overlay never activates. Any other
+ * always-on-top window raised later in the session sits above it permanently, so
+ * `alwaysOnTop` set once at creation is not the same thing as being on top.
+ * Re-issuing it on the way up is a `SetWindowPos(HWND_TOPMOST)` that puts the
+ * bar back in front of whatever got there since.
+ */
+async function settleVisibility(overlay: WebviewWindow): Promise<void> {
+	const wanted = overlayIsVisible(latestView);
+	const actual = await attempt('read visibility', () => overlay.isVisible());
+
+	if (!wanted) {
+		if (actual !== false) await attempt('hide', () => overlay.hide());
+		return;
+	}
+
+	// `actual === null` means we could not find out; showing an already-shown
+	// window is a no-op, so re-issuing is the safe way to be wrong.
+	if (actual !== true) await attempt('show', () => overlay.show());
+	await attempt('raise', () => overlay.setAlwaysOnTop(true));
+}
+
+/**
+ * Record where the overlay moved to, and which screen edge it now belongs to.
  *
  * Called for every move the window reports, ours and the user's alike. A move
  * matching a position we recently commanded is our own; anything else is the
- * user dragging, and becomes the remembered spot.
+ * user dragging, and becomes the remembered spot. A drag that crosses to a
+ * different edge also turns the bar: the new edge is worked out from where the
+ * window was dropped, and the window is re-laid-out once the drag settles.
  */
-export function recordOverlayMove(move: {
-	x: number;
-	y: number;
-	width: number;
-	height: number;
-	dragging: boolean;
-}): void {
+export function recordOverlayMove(move: Rect & { dragging: boolean }): void {
 	if (move.dragging) noteDragInFlight();
 	currentPosition = { x: move.x, y: move.y };
 	if (isOurOwnMove(move)) return;
-	persistAnchorSoon(overlayAnchorFrom(move));
+
+	const edge = edgeForDroppedRect(move) ?? effectiveEdge();
+	const turned = edge !== effectiveEdge();
+	persistPlacementSoon(overlayAnchorFrom(move, edge), edge);
+	// Turning the bar changes its size as well as its layout, and the drag is
+	// still in flight, so the resize is deferred to the settle timer. Arm it even
+	// if this move never reported `dragging`, or a drop that lands on a new edge
+	// with no further moves would keep the old orientation until the next
+	// dictation.
+	if (turned) {
+		geometryDeferred = true;
+		noteDragInFlight();
+	}
+}
+
+/**
+ * Which edge a dropped window belongs to, or `null` when no monitor claims it.
+ *
+ * Synchronous by necessity — this runs inside a move report, several per mouse
+ * frame — so it reads the monitor list captured by the last placement rather
+ * than awaiting `availableMonitors()` on every pixel of a drag.
+ */
+function edgeForDroppedRect(rect: Rect): OverlayEdge | null {
+	const monitor =
+		knownMonitors.find((bounds) =>
+			monitorContains(bounds, {
+				x: rect.x + Math.round(rect.width / 2),
+				y: rect.y + Math.round(rect.height / 2),
+			}),
+		) ?? knownMonitors[0];
+	return monitor ? edgeForRect(rect, monitor) : null;
+}
+
+/**
+ * Monitor bounds as of the last placement, kept for the synchronous edge test
+ * above. Refreshed whenever geometry is applied, which is often enough that a
+ * display change cannot go unnoticed for longer than one dictation.
+ */
+let knownMonitors: MonitorBounds[] = [];
+
+async function refreshKnownMonitors(): Promise<void> {
+	const monitors = await availableMonitors().catch(() => [] as Monitor[]);
+	if (monitors.length > 0) knownMonitors = monitors.map(boundsOf);
 }
 
 /**
  * Forget the remembered spot and send the overlay back to the bottom-right
- * corner. The escape hatch for an overlay dragged onto a monitor that no longer
- * exists, or simply somewhere the user regrets.
+ * corner, lying horizontally. The escape hatch for an overlay dragged onto a
+ * monitor that no longer exists, or simply somewhere the user regrets.
  */
 export function resetOverlayPosition(): void {
 	clearTimeout(anchorWriteTimer);
 	anchorWriteTimer = undefined;
 	pendingAnchor = null;
+	pendingEdge = null;
 	deviceConfig.set('overlay.anchor', null);
+	deviceConfig.set('overlay.edge', 'bottom');
 	currentPosition = null;
 	commandedPositions.length = 0;
 	synchronizeRecordingOverlayWindow(latestView);
@@ -279,47 +416,57 @@ async function getOverlayWindow(): Promise<WebviewWindow | null> {
 }
 
 async function applyOverlayView(view: RecordingOverlayView) {
-	const isSuperseded = () => view !== latestView;
-	if (isSuperseded()) return;
-
 	const overlay = await getOverlayWindow();
-	if (!overlay || isSuperseded()) return;
+	if (!overlay) return;
 
-	if (!overlayIsVisible(view)) {
-		await recordingOverlayStatus.emit(view);
-		await overlay.hide();
-		return;
+	// A newer view is already queued behind this one, so the drawing work here is
+	// wasted — but the visibility step at the bottom still runs, because it reads
+	// the latest view and is the only step the user notices missing.
+	const isSuperseded = () => view !== latestView;
+
+	if (!isSuperseded()) {
+		if (overlayIsVisible(view)) {
+			const size = overlaySize(view);
+			// Grow the window before telling the overlay to draw into it, and shrink
+			// it after. Either way the window is never smaller than what it contains,
+			// so nothing is clipped for the frame between the two IPC calls — which
+			// is every dictation start, since the handle is a quarter of the pill's
+			// width.
+			const growing =
+				!lastAppliedSize ||
+				size.width > lastAppliedSize.width ||
+				size.height > lastAppliedSize.height;
+
+			if (growing) await applyGeometry(overlay, size);
+			if (!isSuperseded()) {
+				await attempt('push status', () => recordingOverlayStatus.emit(view));
+			}
+			if (!growing && !isSuperseded()) await applyGeometry(overlay, size);
+		} else {
+			await attempt('push status', () => recordingOverlayStatus.emit(view));
+		}
 	}
 
-	const size = overlaySize(view);
-	// Grow the window before telling the overlay to draw into it, and shrink it
-	// after. Either way the window is never smaller than what it contains, so
-	// nothing is clipped for the frame between the two IPC calls — which is
-	// every dictation start, since the handle is a quarter of the pill's width.
-	const growing =
-		!lastAppliedSize ||
-		size.width > lastAppliedSize.width ||
-		size.height > lastAppliedSize.height;
-
-	if (growing) await applyGeometry(overlay, size);
-	if (isSuperseded()) return;
-
-	await recordingOverlayStatus.emit(view);
-	if (isSuperseded()) return;
-
-	if (!growing) await applyGeometry(overlay, size);
-	if (isSuperseded()) return;
-
-	await overlay.show();
+	await settleVisibility(overlay);
 }
 
-/** Synchronize the native overlay without letting cosmetic failures stop capture. */
+/**
+ * Synchronize the native overlay without letting cosmetic failures stop capture.
+ *
+ * The caller reads the docked edge from settings, which lags a fresh drag by the
+ * anchor write debounce, so it is overridden here with this module's own pending
+ * value. One authority for the edge is the point: the window is sized from it
+ * and the pill lays itself out from it, and a window sized for a horizontal bar
+ * containing a vertical one is a bar drawn outside its own window.
+ */
 export function synchronizeRecordingOverlayWindow(
 	view: RecordingOverlayView,
 ): void {
-	latestView = view;
+	const edge = effectiveEdge();
+	const normalized = view.edge === edge ? view : { ...view, edge };
+	latestView = normalized;
 	queue = queue
-		.then(() => applyOverlayView(view))
+		.then(() => applyOverlayView(normalized))
 		.catch((error) => {
 			log.warn(error instanceof Error ? error : new Error(String(error)));
 		});
