@@ -548,3 +548,96 @@ Two prompt lessons from the same investigation, both about a model's idea of "cl
 Both rules have to live in the part of the prompt that outranks the user's own directive;
 a user directive saying "never eat up words" did not survive an invariant block that said
 otherwise.
+
+### Windows 11 — getting a tray icon out of the overflow flyout (verified 2026-08-02)
+
+Windows 11 files **every** newly registered notification icon behind the `^` chevron and
+offers no API to opt out. The only switch is Settings → Personalization → Taskbar →
+"Other system tray icons", and what it writes is:
+
+```
+HKCU\Control Panel\NotifyIconSettings\<hash>\IsPromoted = 1   (REG_DWORD)
+```
+
+Each subkey carries `ExecutablePath`, `UID`, `InitialTooltip` and an `IconSnapshot`.
+Explorer reads `IsPromoted` **live** — setting it moved Whispering's microphone icon out of
+the flyout and next to the battery with no explorer restart and no relaunch. Verified by
+screenshotting the notification area before and after.
+
+Three things to know before automating it:
+
+- **The record does not exist until Explorer has published the icon**, which on a fresh
+  install is a second or two after `TrayIconBuilder::build`. Poll for it rather than
+  reading once at startup and giving up (`shell.rs::promote_tray_icon_once`, 20 × 500 ms).
+- **`ExecutablePath` is not always a plain path.** Explorer rewrites paths under a known
+  folder as its GUID (`{6D809377-6AF0-444B-8957-A3773F02200E}\App\app.exe` for Program
+  Files), so a whole-string comparison silently never matches a machine-wide install.
+  Compare the trailing directory + file name as well.
+- **It is the user's preference.** Do it once, behind a marker, or you override someone who
+  deliberately hid the icon on every launch.
+
+`winreg` is already a dependency on the Windows target.
+
+### Tauri v2 — minimize is not a close (verified 2026-08-02)
+
+`WindowEvent::CloseRequested` fires only for the X button. Minimizing keeps
+`WS_EX_APPWINDOW` and its taskbar button, so a "closes to tray" app still eats taskbar space
+the moment the user hits `–` instead. Intercept it separately:
+
+```rust
+WindowEvent::Resized(_) => {
+    if window.is_minimized().unwrap_or(false) {
+        let _ = window.unminimize();
+        let _ = window.hide();
+    }
+}
+```
+
+`unminimize()` **before** `hide()`: a window that is hidden *and* minimized comes back
+minimized, so restoring it from the tray looks like the tray icon did nothing.
+
+Confirm with Win32 rather than by eye — `GetWindowLongPtr(GWL_STYLE)` must lose `WS_VISIBLE`
+(0x10000000) and never hold `WS_MINIMIZE` (0x20000000), and the taskbar button must be gone
+from a screenshot of the strip.
+
+### Windows topmost windows are ordered by activation (2026-08-02)
+
+`always_on_top` is not "stays in front". Windows keeps one topmost band and orders windows
+*within* it by activation, and the overlay is `focusable(false)` / `WS_EX_NOACTIVATE`, so it
+never activates and never rises. Any other always-on-top window raised later in the session
+sits above it for good. Re-issue `setAlwaysOnTop(true)` whenever the overlay is shown; it is
+a `SetWindowPos(HWND_TOPMOST)` that puts it back at the front of the band.
+
+### A window cannot be dragged from its own webview without pointer capture (2026-08-02)
+
+The press has to be followed until it has travelled far enough to be a drag rather than a
+click (see the `startDragging` entry above). But the overlay window is barely bigger than the
+element being pressed — a vertical bar is 20 logical px wide — so a quick flick leaves the
+window between two pointer samples. Those moves go to whatever window is now under the
+cursor, the threshold is never crossed, `startDragging` is never called, and the bar simply
+refuses to move. Reproduced reliably on the 20px vertical handle and not at all on the 96px
+horizontal one.
+
+`setPointerCapture` on `pointerdown` fixes it, with two rules:
+
+- **Release it before calling `startDragging`.** From that call on the document receives no
+  pointer events at all, so a capture held across it is never released by a `pointerup` that
+  never arrives.
+- **Nested action buttons must `stopPropagation` on `pointerdown`.** A captured pointer
+  retargets the compatibility `click` to the capturing element, so capturing on the pill body
+  from a press that landed on Stop would break Stop.
+
+### This app's Tauri IPC cannot be monkey-patched from the console (2026-08-02)
+
+`window.__TAURI_INTERNALS__.invoke`, `.postMessage`, `.ipc`, `.runCallback` and `.callbacks`
+are all defined `writable: false, configurable: false`. Assigning over them fails silently —
+the assignment appears to work (new own properties like `__origInvoke` stick) while every
+real call still goes to the original. Check with `Object.getOwnPropertyDescriptor` before
+concluding an injected fault "did not reproduce".
+
+To fault-inject a window command anyway, **use the ACL**: drop the permission from
+`capabilities/trusted-whispering-native-production.json`, `cargo clean -p epicenter --release`,
+and build. The command then rejects with `Command plugin:window|<name> not allowed by ACL` on
+every call — a real, repeatable failure at exactly the layer under test. That is how the
+"the bar sometimes never appears" fix was proven: with `set_position` denied, the bar still
+appeared (in the wrong place), and the log named the failing step.
