@@ -628,6 +628,7 @@ fn launch_host(app: &DesktopAppHandle, port: u16) -> Result<LaunchedHost> {
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::from(log.try_clone()?));
+    hide_console_window(&mut command);
 
     let mut child = command
         .spawn()
@@ -686,6 +687,25 @@ fn apps_dist(_app: &DesktopAppHandle) -> Result<PathBuf> {
 fn apps_dist(app: &DesktopAppHandle) -> Result<PathBuf> {
     Ok(app.path().resource_dir()?.join("apps-dist"))
 }
+
+/// Keep the Bun host's console off the user's screen on Windows.
+///
+/// `epicenter-host.exe` is a console subsystem binary, so Windows gives it a
+/// console window of its own the moment it is spawned. That window sits beside
+/// Whispering on every launch looking like a stray command prompt, and closing
+/// it kills the host — which takes Whispering's entire UI down with it, since
+/// the host is what serves the app. `CREATE_NO_WINDOW` starts the process with
+/// no console at all; stdin, stdout and stderr are already redirected to pipes
+/// and the log file, so nothing was being shown there that anyone could read.
+#[cfg(windows)]
+fn hide_console_window(command: &mut Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    command.creation_flags(CREATE_NO_WINDOW);
+}
+
+#[cfg(not(windows))]
+fn hide_console_window(_command: &mut Command) {}
 
 #[cfg(debug_assertions)]
 fn host_command(_app: &DesktopAppHandle) -> Result<Command> {
