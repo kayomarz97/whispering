@@ -710,3 +710,23 @@ println!("cargo:rustc-link-arg-bins=/MANIFEST:NO");
 Verify a change here by checking **both** sides: `cargo test --lib` runs, *and*
 `cargo build --release` links, *and* each binary contains exactly one
 `Microsoft.Windows.Common-Controls` occurrence.
+
+### `cargo test` regenerates `bindings.gen.ts` unformatted (2026-08-03)
+
+The lib test suite includes `export_bindings::export_types`, which rewrites
+`apps/whispering/src/lib/tauri/bindings.gen.ts` from Specta. Specta emits raw
+output — double quotes, no wrapping — while the committed file is the
+Biome-formatted version, so **every `cargo test` run leaves a ~400-line diff that
+is pure formatting**. Nobody hit this before because `cargo test` never ran here
+(see the manifest entry above).
+
+After running the Rust tests, either `git checkout` the file or run
+`bunx --bun biome check --write` on it before committing. Do not hand-edit it:
+the pipeline is Specta → Biome, and running that pipeline is what produces the
+correct content.
+
+Note the formatted output is not always identical to what is committed — Biome's
+`useImportType` now writes `type Channel`, which the stored copy predates. That
+is a real (correct) change, not churn: `Channel` appears only in a type position
+in that file. Check the semantic diff after formatting rather than assuming any
+difference is noise.
